@@ -1,0 +1,17 @@
+{
+  "name": "PCMD3180",
+  "version": "1.0.0",
+  "description": "Arduino driver for TI PCMD3180 8-channel PDM to TDM/I2S converter",
+  "keywords": ["pdm", "microphone", "audio", "tdm", "i2s", "codec"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nup002/PCMD3180.git"
+  },
+  "authors": {
+    "name": "Magne Lauritzen",
+    "email": "mag.lauritzen@gmail.com"
+  },
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": "*"
+}
