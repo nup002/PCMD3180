@@ -1,6 +1,8 @@
 # PCMD3180 Arduino Library
 
-Arduino library for the Texas Instruments PCMD3180 octa-channel PDM-to-PCM converter with I2C control interface.
+Arduino library for the [Texas Instruments PCMD3180](https://www.ti.com/product/PCMD3180) eight-channel PDM-to-PCM converter with I2C control interface.
+
+**Not yet published, still in beta**
 
 ## Overview
 
@@ -152,6 +154,7 @@ void loop() {}
 Use this when the PCMD3180 is the clock source on the bus, for example when connecting
 directly to an MCU I2S peripheral in slave mode.
 
+**Warning: Master mode has not been tested**
 ```cpp
 #include <Wire.h>
 #include "PCMD3180.h"
@@ -433,13 +436,11 @@ The hardware checksum feature for verifying I2C writes is not exposed. `setI2CBr
 - Verify the PDM clock frequency is appropriate for your sample rate
 
 **Some channels are not synchronized to the others**
-- Ensure that the number of enabled biquads per channel is less or equal to what the PCDM3180 supports. See the section 'Programmable Digital Biquad Filters' in the datasheet.
+- Ensure that the number of enabled biquads per channel is less or equal to what the PCDM3180 supports. See the section `Programmable Digital Biquad Filters` in the datasheet.
 
 ## Resources
 
 - [PCMD3180 Datasheet](https://www.ti.com/product/PCMD3180)
-- [TLV320ADC3140 Datasheet](https://www.ti.com/product/TLV320ADC3140) (related device, same register map)
-- [Linux kernel driver](https://github.com/torvalds/linux/blob/master/sound/soc/codecs/tlv320adcx140.c) (reference implementation this library is based on)
 
 ## License
 
