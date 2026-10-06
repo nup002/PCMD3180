@@ -9,12 +9,16 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <SPI.h>
 
 // Default I2C address (set by the ADDR pins; see datasheet 6.5.1.1)
 #define PCMD3180_I2C_ADDR_DEFAULT 0x4C
 
 // Default SHDNZ pin is no pin, assumed to be set by an external source
 #define PCMD3180_SHDNZ_PIN_DEFAULT 0xFF
+
+// Default SPI clock; the datasheet's minimum SCLK period is 40ns (25MHz, datasheet 5.7)
+#define PCMD3180_SPI_CLOCK_DEFAULT 1000000
 
 // ASI_CFG0 (0x07) ASI_FORMAT, bits [7:6]
 enum AudioFormat {
@@ -318,7 +322,7 @@ class PCMD3180 {
 public:
   /** Constructor for PCMD3180 device
    * @param shdnzPin GPIO pin for hardware shutdown control (0xFF if not used)
-   * @param i2cAddr I2C address of the device (default 0x4C)
+   * @param i2cAddr I2C address of the device (default 0x4C); not used with SPI
    * @param aregInternal True for the internally generated 1.8V AREG (use when
    *        AVDD is 3.3V), false for an external 1.8V AREG supply
    * @param avddInputVoltage Voltage being provided to the AVDD input pin.
@@ -332,15 +336,26 @@ public:
            bool aregInternal = false,
            AVDDInputVoltage avddInputVoltage = AVDD_INPUT_33V);
 
-  /** Initialize the PCMD3180 device and perform basic setup
-   * @param wire TwoWire interface to use (default Wire)
+  /** Initialize the PCMD3180 over I2C and perform basic setup
+   * @param wire TwoWire interface to use (default Wire); call wire.begin() first
    * @return True if initialization successful, false otherwise
    * @note If a SHDNZ pin was given, sets it as an output and calls
-   *       hardwarePowerDown() then hardwarePowerUp(). Then checks that the
-   *       device acknowledges on I2C, then calls reset() and wakeUp(). See
-   *       datasheet 6.4 "Device Functional Modes".
+   *       hardwarePowerDown() then hardwarePowerUp(). Then calls reset() and
+   *       wakeUp(), and checks isConnected(). See datasheet 6.4 "Device
+   *       Functional Modes".
    */
   bool begin(TwoWire &wire = Wire);
+
+  /** Initialize the PCMD3180 over SPI and perform basic setup
+   * @param spi SPIClass interface to use; call spi.begin() first
+   * @param csPin Pin connected to SDA_SSZ (slave select)
+   * @param clockHz SPI clock (max 25MHz, datasheet 5.7)
+   * @return True if initialization successful, false otherwise
+   * @note Uses SPI mode 1 (CPOL = 0, CPHA = 1), MSB first. The device detects
+   *       I2C or SPI from its pins automatically; the host must always use the
+   *       same one (datasheet 6.5.1). Otherwise identical to begin(TwoWire &).
+   */
+  bool begin(SPIClass &spi, uint8_t csPin, uint32_t clockHz = PCMD3180_SPI_CLOCK_DEFAULT);
 
   /** Perform software reset of the PCMD3180 device
    * @return True if reset successful, false otherwise
@@ -419,7 +434,7 @@ public:
    * @return True if successful, false otherwise
    * @note Sets SLEEP_CFG (0x02) I2C_BRDCAST_EN, bit 2. While enabled, the
    *       device responds at the fixed address 0x4C (1001 100) instead of the
-   *       address set by the ADDR pins. See datasheet 6.3.1.3.
+   *       address set by the ADDR pins. See datasheet 6.3.1.3. I2C only.
    */
   bool setI2CBroadcast(bool enable);
 
@@ -1000,10 +1015,14 @@ public:
    */
   bool setHPFCoefficients(int32_t n0, int32_t n1, int32_t d1);
 
-  /** Check if device is present and responding on I2C bus
+  /** Check if device is present and responding
    * @return True if device is connected, false otherwise
-   * @note Sends an empty I2C transmission to the device address and checks
-   *       for an acknowledge. Returns false if begin() has not been called.
+   * @note Over I2C, sends an empty transmission to the device address and
+   *       checks for an acknowledge. SPI has no acknowledge, so over SPI it
+   *       reads DEV_STS1 (0x77) and checks that the reserved bits 4:0 read 0
+   *       and MODE_STS is 4, 6 or 7. Do not call over SPI while the device is
+   *       asleep (datasheet 6.4.2). Returns false if begin() has not been
+   *       called.
    */
   bool isConnected();
 
@@ -1044,7 +1063,7 @@ public:
    * @note The datasheet (7.1.2.75) says this register returns the I2C
    *       transactions checksum value and is updated on writes to other
    *       registers on all pages. It does not document how the checksum is
-   *       computed.
+   *       computed, or whether SPI transactions update it.
    */
   bool getI2CChecksum(uint8_t &checksum);
 
@@ -1136,12 +1155,18 @@ private:
   
   uint8_t _i2cAddr;
   TwoWire *_wire;
+  SPIClass *_spi;
+  uint8_t _csPin;
+  uint32_t _spiClock;
   bool _initialized;
   uint8_t _shdnzPin;
   bool _aregInternal;
   AVDDInputVoltage _avddInputVoltage;
   uint8_t _sleepCfg;  // Last known SLEEP_CFG value, restored by wakeUp()
 
+  bool init();
+  void spiBegin();
+  void spiEnd();
   bool writeCoefficients(uint8_t page, uint8_t reg, const int32_t *values, uint8_t count);
   bool readCoefficients(uint8_t page, uint8_t reg, int32_t *values, uint8_t count);
 };

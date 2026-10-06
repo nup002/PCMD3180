@@ -33,6 +33,28 @@ The PCMD3180 is a 4-port Pulse Density Modulation (PDM) input, 8-channel Pulse C
 
 Add 4.7 kΩ pull-up resistors on SDA and SCL if not already present on your board.
 
+### SPI Connections
+The PCMD3180 can be controlled over SPI instead of I2C. The device detects which one is used from its pins; always use the same one.
+
+| PCMD3180 | Arduino |
+|----------|---------|
+| SCL_MOSI | MOSI |
+| ADDR1_MISO | MISO |
+| ADDR0_SCLK | SCK |
+| SDA_SSZ | any digital pin (chip select) |
+
+```cpp
+#include <SPI.h>
+#include "PCMD3180.h"
+
+PCMD3180 mic;
+
+void setup() {
+  SPI.begin();
+  mic.begin(SPI, 10);  // chip select on pin 10, 1 MHz SPI clock by default (max 25 MHz)
+}
+```
+
 ### I2C Address
 Default address is `0x4C`. This can be changed via hardware address pins. Check your schematic.
 
@@ -305,7 +327,8 @@ These cover the majority of use cases and are the recommended starting point.
 
 | Method | Description |
 |--------|-------------|
-| `begin(wire)` | Initialize device, reset, wake. Returns `false` if not found on I2C. |
+| `begin(wire)` | Initialize device over I2C: reset, wake. Returns `false` if the device is not found. |
+| `begin(spi, csPin, clockHz)` | Same, over SPI (mode 1). `clockHz` defaults to 1 MHz (max 25 MHz). |
 | `configureAsSlave(format, wordLen, numChannels)` | Set ASI format and enable channels; device follows host clocks. |
 | `configureAsMaster(format, wordLen, fsyncRate, bclkRatio, numChannels, mclkFreq)` | Set ASI format, MCLK frequency and clock rates, enable channels; device drives clocks. |
 | `configurePDMInput(clk, numChannels)` | Set PDM clock frequency; for each needed port, select PDM input, output PDMCLK on GPOx and take PDMDINx on GPIx; enable the channels. Assumes port x uses PDMCLKx_GPOx and PDMDINx_GPIx. |

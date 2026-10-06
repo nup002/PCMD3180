@@ -10,13 +10,30 @@ PCMD3180::PCMD3180(uint8_t shdnzPin, uint8_t i2cAddr, bool aregInternal, AVDDInp
   _aregInternal = aregInternal;  // Whether AREG is set to be generated internally or externally
   _avddInputVoltage = avddInputVoltage;
   _wire = nullptr;
+  _spi = nullptr;
+  _csPin = 0xFF;
+  _spiClock = PCMD3180_SPI_CLOCK_DEFAULT;
   _initialized = false;
   _sleepCfg = 0x00;
 }
 
 bool PCMD3180::begin(TwoWire &wire) {
   _wire = &wire;
-  
+  _spi = nullptr;
+  return init();
+}
+
+bool PCMD3180::begin(SPIClass &spi, uint8_t csPin, uint32_t clockHz) {
+  _spi = &spi;
+  _wire = nullptr;
+  _csPin = csPin;
+  _spiClock = clockHz;
+  pinMode(_csPin, OUTPUT);
+  digitalWrite(_csPin, HIGH);
+  return init();
+}
+
+bool PCMD3180::init() {
   // Drive SHDNZ low to put the device in hardware shutdown, then high to take it out
   if (_shdnzPin != PCMD3180_SHDNZ_PIN_DEFAULT) {
     pinMode(_shdnzPin, OUTPUT);
@@ -24,21 +41,22 @@ bool PCMD3180::begin(TwoWire &wire) {
   hardwarePowerDown();
   hardwarePowerUp();
 
-  // Check if device is present
-  if (!isConnected()) {
-    return false;
-  }
-  
   // Perform reset and basic initialization
   if (!reset()) {
     return false;
   }
-  
+
   // Exit sleep mode and select the AREG source given to the constructor
   if (!wakeUp()) {
     return false;
   }
-  
+
+  // Check that the device is present. Done after wakeUp() because the SPI check reads a
+  // register, which is not allowed in sleep mode (datasheet 6.4.2)
+  if (!isConnected()) {
+    return false;
+  }
+
   _initialized = true;
   return true;
 }
@@ -48,13 +66,13 @@ bool PCMD3180::reset() {
   if (!writeRegister(REG_SW_RESET, 0x01)) {
     return false;
   }
-  
+
   // Wait 10ms after reset
   delay(10);
 
   // All registers are back at their defaults
   _sleepCfg = 0x00;
-  
+
   return true;
 }
 
@@ -331,7 +349,7 @@ ASI_CFG0 register methods
 */
 bool PCMD3180::setASIFormat(AudioFormat format, WordLength wordLen) {
   uint8_t asiCfg0 = 0;
-  
+
   // Set audio format
   switch (format) {
     case FORMAT_I2S:
@@ -344,7 +362,7 @@ bool PCMD3180::setASIFormat(AudioFormat format, WordLength wordLen) {
       asiCfg0 |= 0x80;
       break;
   }
-  
+
   // Set word length
   switch (wordLen) {
     case WORD_16_BIT:
@@ -360,7 +378,7 @@ bool PCMD3180::setASIFormat(AudioFormat format, WordLength wordLen) {
       asiCfg0 |= 0x30;
       break;
   }
-  
+
   // Write configurations
   if (!updateRegisterBits(REG_ASI_CFG0, 0xF0, asiCfg0)) {
     return false;
@@ -370,7 +388,7 @@ bool PCMD3180::setASIFormat(AudioFormat format, WordLength wordLen) {
 
 bool PCMD3180::setASIPolarities(ASIPolarity fsyncPolarity, ASIPolarity bclkPolarity) {
   uint8_t asiCfg0 = 0;
-  
+
   // Set FSYNC polarity
   switch (fsyncPolarity) {
     case ASI_POLARITY_STANDARD:
@@ -392,7 +410,7 @@ bool PCMD3180::setASIPolarities(ASIPolarity fsyncPolarity, ASIPolarity bclkPolar
     default:
       return false;
   }
-  
+
   // Write configurations
   if (!updateRegisterBits(REG_ASI_CFG0, 0x0C, asiCfg0)) {
     return false;
@@ -487,7 +505,7 @@ bool PCMD3180::setASIOutputLine(uint8_t channel, ASIPin asiPin) {
 
   uint8_t cfg = 0x40;
   if (asiPin == ASIPIN_PRIMARY) {
-    cfg = 0x00;  
+    cfg = 0x00;
   }
   return updateRegisterBits(asiSlotReg, 0x40, cfg);
 }
@@ -639,7 +657,7 @@ PDMCLK_CFG register methods
 */
 bool PCMD3180::setPDMClock(PDMClock clk) {
   uint8_t pdmclkVal = 0;
-  
+
   switch (clk) {
     case PDMCLK_2822_KHZ:
       pdmclkVal = 0X00;
@@ -654,7 +672,7 @@ bool PCMD3180::setPDMClock(PDMClock clk) {
       pdmclkVal = 0X03;
       break;
   }
-  
+
   return writeRegister(REG_PDMCLK_CFG, 0x40 | pdmclkVal);
 }
 
@@ -951,10 +969,10 @@ bool PCMD3180::setDigitalVolume(uint8_t channel, uint8_t volume) {
   if (channel < 1 || channel > 8) {
     return false;
   }
-  
+
   // Calculate register address for channel volume
   uint8_t volReg = REG_CH1_CFG2 + ((channel - 1) * 5);
-  
+
   return writeRegister(volReg, volume);
 }
 
@@ -962,14 +980,14 @@ bool PCMD3180::setGainCalibration(uint8_t channel, uint8_t gainCalibration) {
   if (channel < 1 || channel > 8) {
     return false;
   }
-  
+
   if (gainCalibration > 15) {
     return false;
   }
 
   // Calculate register address for channel gain calibration
   uint8_t gainReg = REG_CH1_CFG3 + ((channel - 1) * 5);
-  
+
   return writeRegister(gainReg, gainCalibration << 4);
 }
 
@@ -980,7 +998,7 @@ bool PCMD3180::setPhaseCalibration(uint8_t channel, uint8_t phaseCalibration) {
 
   // Calculate register address for channel phase calibration
   uint8_t phaseReg = REG_CH1_CFG4 + ((channel - 1) * 5);
-  
+
   return writeRegister(phaseReg, phaseCalibration);
 }
 
@@ -1144,47 +1162,77 @@ bool PCMD3180::hardwarePowerDown() {
 
 
 
+/*
+Bus access (I2C or SPI)
+*/
+void PCMD3180::spiBegin() {
+  // SPI mode 1: CPOL = 0, CPHA = 1 (datasheet 6.5.1.2)
+  _spi->beginTransaction(SPISettings(_spiClock, MSBFIRST, SPI_MODE1));
+  digitalWrite(_csPin, LOW);
+}
+
+void PCMD3180::spiEnd() {
+  digitalWrite(_csPin, HIGH);
+  _spi->endTransaction();
+}
+
 bool PCMD3180::writeRegister(uint8_t reg, uint8_t value) {
+  if (_spi) {
+    // Command byte: 7-bit register address followed by R/W = 0 (datasheet Table 6-44)
+    spiBegin();
+    _spi->transfer((uint8_t)(reg << 1));
+    _spi->transfer(value);
+    spiEnd();
+    return true;
+  }
   if (!_wire) {
     return false;
   }
-  
+
   _wire->beginTransmission(_i2cAddr);
   _wire->write(reg);
   _wire->write(value);
-  
+
   return (_wire->endTransmission() == 0);
 }
 
 bool PCMD3180::readRegister(uint8_t reg, uint8_t &value) {
+  if (_spi) {
+    // Command byte: 7-bit register address followed by R/W = 1; data follows on MISO
+    spiBegin();
+    _spi->transfer((uint8_t)((reg << 1) | 0x01));
+    value = _spi->transfer(0x00);
+    spiEnd();
+    return true;
+  }
   if (!_wire) {
     return false;
   }
-  
+
   _wire->beginTransmission(_i2cAddr);
   _wire->write(reg);
-  
+
   if (_wire->endTransmission(false) != 0) {
     return false;
   }
-  
+
   if (_wire->requestFrom(_i2cAddr, (uint8_t)1) != 1) {
     return false;
   }
-  
+
   value = _wire->read();
   return true;
 }
 
 bool PCMD3180::updateRegisterBits(uint8_t reg, uint8_t mask, uint8_t value) {
   uint8_t currentVal;
-  
+
   if (!readRegister(reg, currentVal)) {
     return false;
   }
-  
+
   uint8_t newVal = (currentVal & ~mask) | (value & mask);
-  
+
   return writeRegister(reg, newVal);
 }
 
@@ -1193,7 +1241,7 @@ Programmable coefficient methods (pages 2-4)
 */
 bool PCMD3180::writeCoefficients(uint8_t page, uint8_t reg, const int32_t *values, uint8_t count) {
   // Coefficients are on pages 2-4 at registers 0x08-0x7F; stay within one page
-  if (!_wire || page < 2 || page > 4 || reg < 0x08 || count == 0 || reg + 4 * count - 1 > 0x7F) {
+  if ((!_wire && !_spi) || page < 2 || page > 4 || reg < 0x08 || count == 0 || reg + 4 * count - 1 > 0x7F) {
     return false;
   }
   if (!writeRegister(REG_PAGE_SELECT, page)) {
@@ -1201,16 +1249,30 @@ bool PCMD3180::writeCoefficients(uint8_t page, uint8_t reg, const int32_t *value
   }
 
   // Each coefficient is written as four bytes, most significant byte first (datasheet 7.2)
-  _wire->beginTransmission(_i2cAddr);
-  _wire->write(reg);
-  for (uint8_t i = 0; i < count; i++) {
-    uint32_t value = (uint32_t)values[i];
-    _wire->write((uint8_t)(value >> 24));
-    _wire->write((uint8_t)(value >> 16));
-    _wire->write((uint8_t)(value >> 8));
-    _wire->write((uint8_t)value);
+  bool success = true;
+  if (_spi) {
+    spiBegin();
+    _spi->transfer((uint8_t)(reg << 1));
+    for (uint8_t i = 0; i < count; i++) {
+      uint32_t value = (uint32_t)values[i];
+      _spi->transfer((uint8_t)(value >> 24));
+      _spi->transfer((uint8_t)(value >> 16));
+      _spi->transfer((uint8_t)(value >> 8));
+      _spi->transfer((uint8_t)value);
+    }
+    spiEnd();
+  } else {
+    _wire->beginTransmission(_i2cAddr);
+    _wire->write(reg);
+    for (uint8_t i = 0; i < count; i++) {
+      uint32_t value = (uint32_t)values[i];
+      _wire->write((uint8_t)(value >> 24));
+      _wire->write((uint8_t)(value >> 16));
+      _wire->write((uint8_t)(value >> 8));
+      _wire->write((uint8_t)value);
+    }
+    success = (_wire->endTransmission() == 0);
   }
-  bool success = (_wire->endTransmission() == 0);
 
   // Always return to page 0, which the rest of the library uses
   if (!writeRegister(REG_PAGE_SELECT, 0)) {
@@ -1220,7 +1282,7 @@ bool PCMD3180::writeCoefficients(uint8_t page, uint8_t reg, const int32_t *value
 }
 
 bool PCMD3180::readCoefficients(uint8_t page, uint8_t reg, int32_t *values, uint8_t count) {
-  if (!_wire || page < 2 || page > 4 || reg < 0x08 || count == 0 || reg + 4 * count - 1 > 0x7F) {
+  if ((!_wire && !_spi) || page < 2 || page > 4 || reg < 0x08 || count == 0 || reg + 4 * count - 1 > 0x7F) {
     return false;
   }
   if (!writeRegister(REG_PAGE_SELECT, page)) {
@@ -1228,18 +1290,35 @@ bool PCMD3180::readCoefficients(uint8_t page, uint8_t reg, int32_t *values, uint
   }
 
   bool success = false;
-  _wire->beginTransmission(_i2cAddr);
-  _wire->write(reg);
-  if (_wire->endTransmission(false) == 0 &&
-      _wire->requestFrom(_i2cAddr, (uint8_t)(4 * count)) == 4 * count) {
+  if (_spi) {
+    // Over SPI the device sends a dummy byte before each coefficient's four bytes,
+    // so read one coefficient per transaction (datasheet 7.2)
     for (uint8_t i = 0; i < count; i++) {
+      spiBegin();
+      _spi->transfer((uint8_t)(((reg + 4 * i) << 1) | 0x01));
+      _spi->transfer(0x00);
       uint32_t value = 0;
       for (uint8_t b = 0; b < 4; b++) {
-        value = (value << 8) | (uint8_t)_wire->read();
+        value = (value << 8) | _spi->transfer(0x00);
       }
+      spiEnd();
       values[i] = (int32_t)value;
     }
     success = true;
+  } else {
+    _wire->beginTransmission(_i2cAddr);
+    _wire->write(reg);
+    if (_wire->endTransmission(false) == 0 &&
+        _wire->requestFrom(_i2cAddr, (uint8_t)(4 * count)) == 4 * count) {
+      for (uint8_t i = 0; i < count; i++) {
+        uint32_t value = 0;
+        for (uint8_t b = 0; b < 4; b++) {
+          value = (value << 8) | (uint8_t)_wire->read();
+        }
+        values[i] = (int32_t)value;
+      }
+      success = true;
+    }
   }
 
   if (!writeRegister(REG_PAGE_SELECT, 0)) {
@@ -1283,10 +1362,19 @@ bool PCMD3180::setHPFCoefficients(int32_t n0, int32_t n1, int32_t d1) {
 }
 
 bool PCMD3180::isConnected() {
+  if (_spi) {
+    // SPI has no acknowledge; check that DEV_STS1 reads as a valid value instead
+    uint8_t sts1;
+    if (!readRegister(REG_DEV_STS1, sts1)) {
+      return false;
+    }
+    uint8_t mode = sts1 >> 5;
+    return ((sts1 & 0x1F) == 0) && (mode == 4 || mode == 6 || mode == 7);
+  }
   if (!_wire) {
     return false;
   }
-  
+
   _wire->beginTransmission(_i2cAddr);
   return (_wire->endTransmission() == 0);
 }
