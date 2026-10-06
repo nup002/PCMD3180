@@ -379,13 +379,22 @@ mic.readRegister(reg, value);
 mic.updateRegisterBits(reg, mask, value);  // read-modify-write
 ```
 
-The PCMD3180 uses register paging (pages 0–4). This library implements page 0 only. To access other pages:
+The register methods above work on page 0. Use the coefficient methods below for pages 2–4.
 
-```cpp
-mic.writeRegister(0x00, pageNumber);  // select page
-mic.writeRegister(reg, value);         // access register on that page
-mic.writeRegister(0x00, 0);            // return to page 0
-```
+---
+
+### Programmable coefficients (pages 2–4)
+
+Coefficients are 32-bit two's complement numbers. Write them before powering up the PDM channels with `powerPDM(true)`. Each method switches to the right page and back to page 0.
+
+| Method | Description |
+|--------|-------------|
+| `setBiquadCoefficients(biquad, n0, n1, n2, d1, d2)` | Coefficients of biquad 1–12. Which channel each biquad filters depends on `setBiquadConfig()` (datasheet Table 6-15). |
+| `setMixerCoefficient(mixer, inputChannel, value)` | How much of input channel 1–4 mixer 1–4 adds to output channel 1–4, in 1.31 format (`0x7FFFFFFF` = 0 dB, `0` = mute, MSB set = phase inverted). Only with channel summation disabled. |
+| `setHPFCoefficients(n0, n1, d1)` | Coefficients of the first-order IIR used by `HP_FILTER_MODE_CUSTOM`. |
+| `writeCoefficient(page, reg, value)` / `readCoefficient(page, reg, value)` | Raw access to any coefficient register (`reg` is the address of its most significant byte). |
+
+All coefficients default to an all-pass response (biquads and HPF) or to each mixer passing only its own channel at 0 dB. See datasheet sections 6.3.6.4 to 6.3.6.6 for the transfer functions.
 
 ## Technical Notes
 
@@ -418,19 +427,6 @@ The PDM clock must be chosen to match your microphone and sample rate. Common pa
 | 16 kHz | `PDMCLK_1411_KHZ` |
 
 Check your microphone's datasheet for its supported PDM clock range.
-
-## Unimplemented features
-
-The following device capabilities have no corresponding library method. All can be accessed using the low-level `writeRegister()` / `readRegister()` / `updateRegisterBits()` calls.
-
-**Programmable coefficients (pages 2–4)**
-`setBiquadConfig()` sets the number of biquads per channel (0–3), but the biquad coefficients (pages 2 and 3), the digital mixer coefficients and the custom high-pass filter coefficients (page 4) are not accessible through any library method. Each coefficient is a 32-bit value written as four bytes, most significant byte first. To load coefficients you need to switch pages manually, write the coefficient registers, and return to page 0:
-```cpp
-mic.writeRegister(0x00, 2);          // select page 2
-mic.writeRegister(coeffReg, value); // write coefficient byte
-mic.writeRegister(0x00, 0);          // return to page 0
-```
-Refer to datasheet sections 6.3.6.4 to 6.3.6.6 and 7.2 for the register map and coefficient format.
 
 ## Troubleshooting
 

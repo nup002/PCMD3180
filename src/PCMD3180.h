@@ -740,9 +740,8 @@ public:
   /** Configure high-pass filter mode
    * @param mode HPF mode (custom, 12Hz, 96Hz, or 384Hz at 48kHz)
    * @return True if successful, false otherwise
-   * @note Writes DSP_CFG0 (0x6B) HPF_SEL, bits 1:0. The custom filter's
-   *       coefficients (page 4) are not set by this library. See datasheet
-   *       6.3.6.4.
+   * @note Writes DSP_CFG0 (0x6B) HPF_SEL, bits 1:0. Set the custom filter's
+   *       coefficients with setHPFCoefficients(). See datasheet 6.3.6.4.
    */
   bool setHighpassFilterMode(HPFilterMode mode);
 
@@ -757,9 +756,9 @@ public:
   /** Configure number of biquad filters per channel
    * @param numBiquads Number of biquads per channel (0-3; reset default 2)
    * @return True if successful, false otherwise
-   * @note Writes DSP_CFG1 (0x6C) BIQUAD_CFG, bits 6:5. The biquad
-   *       coefficients (pages 2-4) are not set by this library. See datasheet
-   *       6.3.6.5.
+   * @note Writes DSP_CFG1 (0x6C) BIQUAD_CFG, bits 6:5. This also sets which
+   *       biquads are allocated to which channel (see setBiquadCoefficients()).
+   *       See datasheet 6.3.6.5.
    */
   bool setBiquadConfig(uint8_t numBiquads);
 
@@ -930,6 +929,77 @@ public:
    */
   bool updateRegisterBits(uint8_t reg, uint8_t mask, uint8_t value);
 
+  // -------------------------------------------------------------------------
+  // Programmable coefficients (pages 2-4)
+  //
+  // All coefficients are 32-bit two's complement numbers. The datasheet says to
+  // write them before powering up the PDM channels (6.3.6.4, 6.3.6.5, 6.4.3).
+  // They are kept in sleep mode and restored to defaults by a reset.
+  // Each method selects the page, transfers the coefficients in one
+  // multiple-byte I2C transaction (most significant byte first), and then
+  // returns to page 0, which the rest of the library uses.
+  // -------------------------------------------------------------------------
+
+  /** Write one coefficient register
+   * @param page Coefficient page (2-4)
+   * @param reg Address of the coefficient's most significant byte (BYT1),
+   *        0x08-0x7C
+   * @param value Coefficient value
+   * @return True if successful, false otherwise
+   * @note See datasheet 7.2 for the register maps.
+   */
+  bool writeCoefficient(uint8_t page, uint8_t reg, int32_t value);
+
+  /** Read one coefficient register
+   * @param page Coefficient page (2-4)
+   * @param reg Address of the coefficient's most significant byte (BYT1),
+   *        0x08-0x7C
+   * @param value Reference to store the coefficient value
+   * @return True if successful, false otherwise
+   * @note See datasheet 7.2 for the register maps.
+   */
+  bool readCoefficient(uint8_t page, uint8_t reg, int32_t &value);
+
+  /** Set the coefficients of one biquad filter
+   * @param biquad Biquad number (1-12)
+   * @param n0, n1, n2, d1, d2 Coefficients of
+   *        H(z) = (N0 + 2*N1*z^-1 + N2*z^-2) / (2^31 - 2*D1*z^-1 - D2*z^-2).
+   *        Defaults are N0 = 0x7FFFFFFF and the rest 0 (all-pass).
+   * @return True if successful, false otherwise
+   * @note Biquads 1-6 are on page 2 and 7-12 on page 3, at
+   *       0x08 + 20 * ((biquad - 1) % 6). Which channel a biquad filters
+   *       depends on setBiquadConfig() (datasheet Table 6-15):
+   *       1 per channel: biquads 1-4 -> channels 1-4, 9-12 -> channels 5-8.
+   *       2 per channel: biquads 1-8 -> channels 1-4, 1-4 again;
+   *                      9-12 -> channels 5, 6, 5, 6.
+   *       3 per channel: biquads 1-12 -> channels 1-4, repeating.
+   *       See datasheet 6.3.6.5.
+   */
+  bool setBiquadCoefficients(uint8_t biquad, int32_t n0, int32_t n1, int32_t n2, int32_t d1, int32_t d2);
+
+  /** Set how much of an input channel a mixer adds to its output channel
+   * @param mixer Mixer number (1-4); mixer m generates output channel m
+   * @param inputChannel Input channel (1-4)
+   * @param value Scale factor in 1.31 format: 0x7FFFFFFF = +1 (0dB),
+   *        0 = mute. Setting the MSB inverts the phase. Defaults are
+   *        0x7FFFFFFF for inputChannel == mixer and 0 otherwise.
+   * @return True if successful, false otherwise
+   * @note Writes page 4, 0x08 + 16 * (mixer - 1) + 4 * (inputChannel - 1).
+   *       The mixer is only available when channel summation is disabled
+   *       (SUMMATION_MODE_DISABLED) and only for channels 1-4. See datasheet
+   *       6.3.6.6.
+   */
+  bool setMixerCoefficient(uint8_t mixer, uint8_t inputChannel, int32_t value);
+
+  /** Set the coefficients of the programmable first-order IIR (custom HPF)
+   * @param n0, n1, d1 Coefficients of H(z) = (N0 + N1*z^-1) / (2^31 - D1*z^-1).
+   *        Defaults are N0 = 0x7FFFFFFF and the rest 0 (all-pass).
+   * @return True if successful, false otherwise
+   * @note Writes page 4, 0x48-0x53. Used when the HPF mode is
+   *       HP_FILTER_MODE_CUSTOM. See datasheet 6.3.6.4.
+   */
+  bool setHPFCoefficients(int32_t n0, int32_t n1, int32_t d1);
+
   /** Check if device is present and responding on I2C bus
    * @return True if device is connected, false otherwise
    * @note Sends an empty I2C transmission to the device address and checks
@@ -1071,6 +1141,9 @@ private:
   bool _aregInternal;
   AVDDInputVoltage _avddInputVoltage;
   uint8_t _sleepCfg;  // Last known SLEEP_CFG value, restored by wakeUp()
+
+  bool writeCoefficients(uint8_t page, uint8_t reg, const int32_t *values, uint8_t count);
+  bool readCoefficients(uint8_t page, uint8_t reg, int32_t *values, uint8_t count);
 };
 
 #endif // PCMD3180_H

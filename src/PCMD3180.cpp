@@ -1188,6 +1188,100 @@ bool PCMD3180::updateRegisterBits(uint8_t reg, uint8_t mask, uint8_t value) {
   return writeRegister(reg, newVal);
 }
 
+/*
+Programmable coefficient methods (pages 2-4)
+*/
+bool PCMD3180::writeCoefficients(uint8_t page, uint8_t reg, const int32_t *values, uint8_t count) {
+  // Coefficients are on pages 2-4 at registers 0x08-0x7F; stay within one page
+  if (!_wire || page < 2 || page > 4 || reg < 0x08 || count == 0 || reg + 4 * count - 1 > 0x7F) {
+    return false;
+  }
+  if (!writeRegister(REG_PAGE_SELECT, page)) {
+    return false;
+  }
+
+  // Each coefficient is written as four bytes, most significant byte first (datasheet 7.2)
+  _wire->beginTransmission(_i2cAddr);
+  _wire->write(reg);
+  for (uint8_t i = 0; i < count; i++) {
+    uint32_t value = (uint32_t)values[i];
+    _wire->write((uint8_t)(value >> 24));
+    _wire->write((uint8_t)(value >> 16));
+    _wire->write((uint8_t)(value >> 8));
+    _wire->write((uint8_t)value);
+  }
+  bool success = (_wire->endTransmission() == 0);
+
+  // Always return to page 0, which the rest of the library uses
+  if (!writeRegister(REG_PAGE_SELECT, 0)) {
+    return false;
+  }
+  return success;
+}
+
+bool PCMD3180::readCoefficients(uint8_t page, uint8_t reg, int32_t *values, uint8_t count) {
+  if (!_wire || page < 2 || page > 4 || reg < 0x08 || count == 0 || reg + 4 * count - 1 > 0x7F) {
+    return false;
+  }
+  if (!writeRegister(REG_PAGE_SELECT, page)) {
+    return false;
+  }
+
+  bool success = false;
+  _wire->beginTransmission(_i2cAddr);
+  _wire->write(reg);
+  if (_wire->endTransmission(false) == 0 &&
+      _wire->requestFrom(_i2cAddr, (uint8_t)(4 * count)) == 4 * count) {
+    for (uint8_t i = 0; i < count; i++) {
+      uint32_t value = 0;
+      for (uint8_t b = 0; b < 4; b++) {
+        value = (value << 8) | (uint8_t)_wire->read();
+      }
+      values[i] = (int32_t)value;
+    }
+    success = true;
+  }
+
+  if (!writeRegister(REG_PAGE_SELECT, 0)) {
+    return false;
+  }
+  return success;
+}
+
+bool PCMD3180::writeCoefficient(uint8_t page, uint8_t reg, int32_t value) {
+  return writeCoefficients(page, reg, &value, 1);
+}
+
+bool PCMD3180::readCoefficient(uint8_t page, uint8_t reg, int32_t &value) {
+  return readCoefficients(page, reg, &value, 1);
+}
+
+bool PCMD3180::setBiquadCoefficients(uint8_t biquad, int32_t n0, int32_t n1, int32_t n2, int32_t d1, int32_t d2) {
+  if (biquad < 1 || biquad > 12) {
+    return false;
+  }
+  // Biquads 1-6 are on page 2 and 7-12 on page 3, 20 bytes each starting at 0x08
+  uint8_t page = (biquad <= 6) ? 2 : 3;
+  uint8_t reg = 0x08 + 20 * ((biquad - 1) % 6);
+  const int32_t values[5] = {n0, n1, n2, d1, d2};
+  return writeCoefficients(page, reg, values, 5);
+}
+
+bool PCMD3180::setMixerCoefficient(uint8_t mixer, uint8_t inputChannel, int32_t value) {
+  if (mixer < 1 || mixer > 4 || inputChannel < 1 || inputChannel > 4) {
+    return false;
+  }
+  // Page 4: mixer m, input channel c at 0x08 + 16 * (m - 1) + 4 * (c - 1)
+  uint8_t reg = 0x08 + 16 * (mixer - 1) + 4 * (inputChannel - 1);
+  return writeCoefficients(4, reg, &value, 1);
+}
+
+bool PCMD3180::setHPFCoefficients(int32_t n0, int32_t n1, int32_t d1) {
+  // Page 4: IIR_N0 at 0x48, IIR_N1 at 0x4C, IIR_D1 at 0x50
+  const int32_t values[3] = {n0, n1, d1};
+  return writeCoefficients(4, 0x48, values, 3);
+}
+
 bool PCMD3180::isConnected() {
   if (!_wire) {
     return false;
