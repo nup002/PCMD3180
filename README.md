@@ -1,6 +1,6 @@
 # PCMD3180 Arduino Library
 
-Arduino library for the [Texas Instruments PCMD3180](https://www.ti.com/product/PCMD3180) eight-channel PDM-to-PCM converter, controlled over I2C or SPI.
+A fully-featured Arduino library for the [Texas Instruments PCMD3180](https://www.ti.com/product/PCMD3180) eight-channel PDM-to-PCM converter, controlled over I2C or SPI.
 
 > **Version 0.1.0 — early release.** The API may still change. Master mode, SPI control and the programmable coefficients have not yet been tested on hardware.
 
