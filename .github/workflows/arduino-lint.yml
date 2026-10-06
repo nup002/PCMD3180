@@ -1,7 +1,27 @@
+name: Arduino CI
+
 on: [push, pull_request]
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - name: arduino/arduino-lint-action
-      - uses: arduino/arduino-lint-action@v2.0.0
+      - uses: actions/checkout@v4
+      - uses: arduino/arduino-lint-action@v2
+        with:
+          project-type: library
+          compliance: strict
+          # Change to "update" once the library is listed in the Library Manager
+          library-manager: submit
+
+  compile-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/compile-sketches@v1
+        with:
+          fqbn: arduino:avr:uno
+          # TeensyTDMStreaming needs the Teensy core and Audio library, so it is not compiled here
+          sketch-paths: |
+            - examples/Basic
+            - examples/SPIBasic

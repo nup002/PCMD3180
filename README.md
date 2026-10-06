@@ -1,12 +1,12 @@
 # PCMD3180 Arduino Library
 
-Arduino library for the [Texas Instruments PCMD3180](https://www.ti.com/product/PCMD3180) eight-channel PDM-to-PCM converter with I2C control interface.
+Arduino library for the [Texas Instruments PCMD3180](https://www.ti.com/product/PCMD3180) eight-channel PDM-to-PCM converter, controlled over I2C or SPI.
 
-**Not yet published, still in beta**
+> **Version 0.1.0 — early release.** The API may still change. Master mode, SPI control and the programmable coefficients have not yet been tested on hardware.
 
 ## Overview
 
-The PCMD3180 is a 4-port Pulse Density Modulation (PDM) input, 8-channel Pulse Code Modulation (PCM) output audio codec. It accepts up to four PDM microphone pairs (8 physical microphones) and outputs PCM audio over Inter-Integrated Circuit Sound (I2S) or Time-Division Multiplexing (TDM). This library provides an Arduino interface built on the `Wire` library.
+The PCMD3180 is a 4-port Pulse Density Modulation (PDM) input, 8-channel Pulse Code Modulation (PCM) output audio codec. It accepts up to four PDM microphone pairs (8 physical microphones) and outputs PCM audio over Inter-Integrated Circuit Sound (I2S) or Time-Division Multiplexing (TDM). This library provides an Arduino interface over the `Wire` (I2C) or `SPI` library.
 
 ## Features
 
@@ -75,9 +75,19 @@ Connect BCLK, FSYNC, and SDOUT to your MCU or DSP's I2S/TDM input. In slave mode
 
 ## Installation
 
-1. Create a folder named `PCMD3180` inside your Arduino `libraries` folder
-2. Copy `PCMD3180.h` and `PCMD3180.cpp` into it
-3. Restart the Arduino IDE
+**Arduino IDE:** open the Library Manager, search for `PCMD3180` and click Install.
+
+**PlatformIO:** add the library to `lib_deps` in `platformio.ini`:
+```ini
+lib_deps = https://github.com/nup002/PCMD3180.git
+```
+
+**Manually:** download this repository as a ZIP and use *Sketch → Include Library → Add .ZIP Library…* in the Arduino IDE.
+
+### Examples
+- **Basic** — I2C, 8-channel TDM slave, prints device status
+- **SPIBasic** — the same over SPI
+- **TeensyTDMStreaming** — Teensy 4.x with the Teensy Audio library: captures eight microphones and streams them over USB
 
 ## Quick Start
 

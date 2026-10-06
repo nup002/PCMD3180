@@ -1,8 +1,8 @@
 /*
- * PCMD3180 Basic Example
+ * PCMD3180 Teensy TDM Streaming Example
  *
- * This sketch demonstrates basic initialization and configuration
- * of the PCMD3180 PDM-to-PCM converter.
+ * Captures eight PDM microphones with the PCMD3180 and streams the audio from
+ * a Teensy over USB.
  *
  * Requires a Teensy 4.x with the Teensy Audio library, built with
  * USB type "Dual Serial" (-D USB_DUAL_SERIAL). Status messages are printed
@@ -71,7 +71,7 @@ void setup() {
     ; // Wait for serial port to connect
   }
 
-  Serial.println("PCMD3180 Basic Example");
+  Serial.println("PCMD3180 Teensy TDM Streaming Example");
   Serial.println("======================");
   Serial.println("Audio data will stream on SerialUSB1");
 
