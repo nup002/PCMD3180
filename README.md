@@ -21,6 +21,22 @@ The PCMD3180 is a 4-port Pulse Density Modulation (PDM) input, 8-channel Pulse C
 - Hardware shutdown via SHDNZ pin
 - Low-level register access for advanced use
 
+## Installation
+
+**Arduino IDE:** open the Library Manager, search for `PCMD3180` and click Install.
+
+**PlatformIO:** add the library to `lib_deps` in `platformio.ini`:
+```ini
+lib_deps = https://github.com/nup002/PCMD3180.git
+```
+
+**Manually:** download this repository as a ZIP and use *Sketch → Include Library → Add .ZIP Library…* in the Arduino IDE.
+
+### Examples
+- **Basic** — I2C, 8-channel TDM slave, prints device status
+- **SPIBasic** — the same over SPI
+- **TeensyTDMStreaming** — Teensy 4.x with the Teensy Audio library: captures eight microphones and streams them over USB
+- 
 ## Hardware Setup
 
 ### I2C Connections
@@ -72,22 +88,6 @@ The default edge assignment (`EDGE_MODE_EVEN_POSITIVE`) samples the even-numbere
 
 ### ASI Output
 Connect BCLK, FSYNC, and SDOUT to your MCU or DSP's I2S/TDM input. In slave mode the PCMD3180 follows the clocks your host provides; in master mode it drives them.
-
-## Installation
-
-**Arduino IDE:** open the Library Manager, search for `PCMD3180` and click Install.
-
-**PlatformIO:** add the library to `lib_deps` in `platformio.ini`:
-```ini
-lib_deps = https://github.com/nup002/PCMD3180.git
-```
-
-**Manually:** download this repository as a ZIP and use *Sketch → Include Library → Add .ZIP Library…* in the Arduino IDE.
-
-### Examples
-- **Basic** — I2C, 8-channel TDM slave, prints device status
-- **SPIBasic** — the same over SPI
-- **TeensyTDMStreaming** — Teensy 4.x with the Teensy Audio library: captures eight microphones and streams them over USB
 
 ## Quick Start
 
