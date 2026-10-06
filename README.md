@@ -363,6 +363,8 @@ These cover the majority of use cases and are the recommended starting point.
 | `isConnected()` | Returns `true` if the device acknowledges on I2C. |
 | `getDeviceStatus(status0, deviceModeStatus)` | Read DEV_STS0 and the device mode from DEV_STS1 (bits 7:5). |
 | `getLatchedInterruptStatus(asiBusClockError, pllLockError)` | Read latched interrupt flags. |
+| `getI2CChecksum(checksum)` | Read the I2C transactions checksum (I2C_CKSUM, 0x7E). The datasheet does not document how it is computed. |
+| `resetI2CChecksum(value)` | Reset the checksum to `value` (default 0). |
 | `getAutodetectedClocks(fsRate, ratio)` | Read auto-detected sample rate (as `FSRate`, e.g. `FSRATE_48` = 44.1 or 48 kHz) and BCLK/FSYNC ratio (slave mode). |
 
 ---
@@ -429,9 +431,6 @@ mic.writeRegister(coeffReg, value); // write coefficient byte
 mic.writeRegister(0x00, 0);          // return to page 0
 ```
 Refer to datasheet sections 6.3.6.4 to 6.3.6.6 and 7.2 for the register map and coefficient format.
-
-**I2C checksum (I2C_CKSUM, 0x7E)**
-The device keeps a running checksum of I2C transactions in this register, which can be used to verify writes. There is no library method for it; read it with `readRegister(0x7E, value)`, and write to it to reset the checksum to the written value.
 
 ## Troubleshooting
 

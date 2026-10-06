@@ -968,6 +968,24 @@ public:
    */
   bool getAutodetectedClocks(FSRate &fsRate, uint32_t &ratio);
 
+  /** Read the I2C transactions checksum
+   * @param checksum Reference to store the I2C_CKSUM (0x7E) value
+   * @return True if read successful, false otherwise
+   * @note The datasheet (7.1.2.75) says this register returns the I2C
+   *       transactions checksum value and is updated on writes to other
+   *       registers on all pages. It does not document how the checksum is
+   *       computed.
+   */
+  bool getI2CChecksum(uint8_t &checksum);
+
+  /** Reset the I2C transactions checksum
+   * @param value Value to reset the checksum to (default 0)
+   * @return True if write successful, false otherwise
+   * @note Writes I2C_CKSUM (0x7E); writing to this register resets the
+   *       checksum to the written value (datasheet 7.1.2.75).
+   */
+  bool resetI2CChecksum(uint8_t value = 0);
+
 private:
   // Register address constants
   static constexpr uint8_t REG_PAGE_SELECT   = 0x00;

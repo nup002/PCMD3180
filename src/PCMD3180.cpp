@@ -160,6 +160,14 @@ bool PCMD3180::getAutodetectedClocks(FSRate &fsRate, uint32_t &ratio) {
   return true;
 }
 
+bool PCMD3180::getI2CChecksum(uint8_t &checksum) {
+  return readRegister(REG_I2C_CKSUM, checksum);
+}
+
+bool PCMD3180::resetI2CChecksum(uint8_t value) {
+  return writeRegister(REG_I2C_CKSUM, value);
+}
+
 bool PCMD3180::getGPIOMonitorValue(uint8_t &monitorValue) {
   uint8_t status;
   if (!readRegister(REG_GPIO_MON, status)) {
