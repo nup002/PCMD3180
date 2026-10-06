@@ -37,16 +37,16 @@ Add 4.7 kΩ pull-up resistors on SDA and SCL if not already present on your boar
 Default address is `0x4C`. This can be changed via hardware address pins. Check your schematic.
 
 ### PDM Microphone Connections
-Each PDMIN port carries two microphone channels on one data line, differentiated by clock edge:
+Each PDMIN port carries two microphone channels on one data line, differentiated by clock edge. With the default edge setting:
 
 | Port | Rising edge | Falling edge |
 |------|------------|--------------|
-| PDMIN1 | CH1 | CH2 |
-| PDMIN2 | CH3 | CH4 |
-| PDMIN3 | CH5 | CH6 |
-| PDMIN4 | CH7 | CH8 |
+| PDMIN1 | CH2 | CH1 |
+| PDMIN2 | CH4 | CH3 |
+| PDMIN3 | CH6 | CH5 |
+| PDMIN4 | CH8 | CH7 |
 
-The default edge assignment (`EDGE_MODE_EVEN_NEGATIVE`) samples the even-numbered channel on the falling edge. Most PDM microphones specify which edge their data is valid on. Check your mic's datasheet and use `setPortEdgeLatchMode()` if you need to change the default.
+The default edge assignment (`EDGE_MODE_EVEN_POSITIVE`) samples the even-numbered channel on the rising edge. Most PDM microphones specify which edge their data is valid on. Check your mic's datasheet and use `setPortEdgeLatchMode()` if you need to change the default.
 
 ### ASI Output
 Connect BCLK, FSYNC, and SDOUT to your MCU or DSP's I2S/TDM input. In slave mode the PCMD3180 follows the clocks your host provides; in master mode it drives them.
@@ -62,7 +62,7 @@ Connect BCLK, FSYNC, and SDOUT to your MCU or DSP's I2S/TDM input. In slave mode
 Most setups follow the same three-step pattern after `begin()`:
 
 1. `configureAsSlave()` or `configureAsMaster()` — sets the ASI format and channel count
-2. `configurePDMInput()` — sets the PDM clock and enables the right ports
+2. `configurePDMInput()` — sets the PDM clock, selects PDM input on the needed channels, and configures the PDMCLK (GPO) and PDMDIN (GPI) pins
 3. `powerPDM(true)` — powers up the PDM block
 
 ```cpp
@@ -182,16 +182,16 @@ void loop() {}
 
 ### Adjusting digital volume
 
-`setDigitalVolume()` accepts values 0x00–0xFF. `0x00` is approximately mute;
-`0x7F` is unity gain (0 dB); `0xFF` is +24 dB.
+`setDigitalVolume()` accepts values 0x00–0xFF in 0.5 dB steps. `0x00` is mute;
+`0xC9` is unity gain (0 dB, the default); `0xFF` is +27 dB.
 
 ```cpp
 // Set all channels to unity gain
-mic.setAllChannelVolumes(0x7F);
+mic.setAllChannelVolumes(0xC9);
 
 // Or set individual channels
-mic.setDigitalVolume(1, 0x7F);  // CH1 unity gain
-mic.setDigitalVolume(2, 0x60);  // CH2 slightly lower
+mic.setDigitalVolume(1, 0xC9);  // CH1 unity gain
+mic.setDigitalVolume(2, 0xBF);  // CH2 5 dB lower
 ```
 
 ---
@@ -199,7 +199,7 @@ mic.setDigitalVolume(2, 0x60);  // CH2 slightly lower
 ### Hardware shutdown pin
 
 If your board connects a GPIO to the SHDNZ pin, pass it to the constructor.
-The library will assert it low at construction and release it in `begin()`.
+`begin()` sets the pin as an output, drives it low to put the device in hardware shutdown, then releases it. The constructor does not touch the pin; to hold the device in shutdown from power-on, add a pull-down resistor on SHDNZ.
 
 ```cpp
 #define SHDNZ_PIN 5
@@ -225,7 +225,7 @@ void setup() {
   mic.configureAsSlave(FORMAT_I2S, WORD_32_BIT, 2);
   // Configure MICBIAS to follow AVDD voltage
   // VREF_SEL defaults to 2.75 V — set appropriately for your AVDD
-  mic.configureBIAS(MICBIAS_AVDD, VREF_2V75);
+  mic.configureBias(MICBIAS_MODE_AVDD, VREF_MODE_275V);
 
   // Power on MICBIAS before the PDM block
   mic.powerMICBIAS(true);
@@ -255,25 +255,25 @@ PCMD3180 mic(PCMD3180_SHDNZ_PIN_DEFAULT, PCMD3180_I2C_ADDR_DEFAULT,
 Each device needs a unique I2C address (set via hardware address pins). Call `begin()` on each device individually first, this resets and wakes each one. Then enable broadcast on all of them so subsequent shared configuration writes reach every device simultaneously.
 
 ```cpp
-PCMD3180 mic_a(0xFF, 0x4C);
-PCMD3180 mic_b(0xFF, 0x4D);
+PCMD3180 micA(0xFF, 0x4C);
+PCMD3180 micB(0xFF, 0x4D);
 
 void setup() {
   Wire.begin();
 
   // Each device must be initialized individually
-  mic_a.begin();
-  mic_b.begin();
+  micA.begin();
+  micB.begin();
 
   // Enable broadcast on all devices before shared configuration
-  mic_a.setI2CBroadcast(true);
-  mic_b.setI2CBroadcast(true);
+  micA.setI2CBroadcast(true);
+  micB.setI2CBroadcast(true);
 
   // These calls now go to both devices simultaneously via the broadcast address
-  mic_a.configureAsSlave(FORMAT_TDM, WORD_32_BIT, 8);
-  mic_a.configurePDMInput(PDMCLK_2822_KHZ, 8);
-  mic_a.powerPDM(true);
-  mic_a.powerPLL(true);
+  micA.configureAsSlave(FORMAT_TDM, WORD_32_BIT, 8);
+  micA.configurePDMInput(PDMCLK_2822_KHZ, 8);
+  micA.powerPDM(true);
+  micA.powerPLL(true);
 }
 ```
 
@@ -282,13 +282,13 @@ void setup() {
 ### Constructor
 
 ```cpp
-PCMD3180(uint8_t shdnz_pin    = PCMD3180_SHDNZ_PIN_DEFAULT,
-         uint8_t i2c_addr     = PCMD3180_I2C_ADDR_DEFAULT,
-         bool    areg_internal = false,
-         AVDDInputVoltage avdd = AVDD_INPUT_33V);
+PCMD3180(uint8_t shdnzPin      = PCMD3180_SHDNZ_PIN_DEFAULT,
+         uint8_t i2cAddr       = PCMD3180_I2C_ADDR_DEFAULT,
+         bool    aregInternal  = false,
+         AVDDInputVoltage avddInputVoltage = AVDD_INPUT_33V);
 ```
 
-Pass `PCMD3180_SHDNZ_PIN_DEFAULT` (0xFF) for `shdnz_pin` if you are not controlling the shutdown pin from firmware. Pass `true` for `areg_internal` if you want to generate the AREG voltage internally in the PCMD3180.
+Pass `PCMD3180_SHDNZ_PIN_DEFAULT` (0xFF) for `shdnzPin` if you are not controlling the shutdown pin from firmware. Pass `true` for `aregInternal` if you want to generate the AREG voltage internally in the PCMD3180.
 
 ---
 
@@ -298,11 +298,11 @@ These cover the majority of use cases and are the recommended starting point.
 
 | Method | Description |
 |--------|-------------|
-| `begin(wirePort)` | Initialize device, reset, wake. Returns `false` if not found on I2C. |
-| `configureAsSlave(format, word_len, num_channels)` | Set ASI format and enable channels; device follows host clocks. |
-| `configureAsMaster(format, word_len, fsync_rate, bclk_ratio, num_channels)` | Set ASI format, program clock rates, enable channels; device drives clocks. |
-| `configurePDMInput(clk, num_channels)` | Set PDM clock frequency and enable the required ports and channels. |
-| `enableAllChannels(num_channels)` | Enable the first N input and output channels by count instead of bitmask. |
+| `begin(wire)` | Initialize device, reset, wake. Returns `false` if not found on I2C. |
+| `configureAsSlave(format, wordLen, numChannels)` | Set ASI format and enable channels; device follows host clocks. |
+| `configureAsMaster(format, wordLen, fsyncRate, bclkRatio, numChannels)` | Set ASI format, program clock rates, enable channels; device drives clocks. |
+| `configurePDMInput(clk, numChannels)` | Set PDM clock frequency; for each needed port, select PDM input, output PDMCLK on GPOx and take PDMDINx on GPIx; enable the channels. Assumes port x uses PDMCLKx_GPOx and PDMDINx_GPIx. |
+| `enableAllChannels(numChannels)` | Enable the first N input and output channels by count instead of bitmask. |
 | `setAllChannelVolumes(volume)` | Set the same digital volume on all 8 channels. |
 
 ---
@@ -311,10 +311,10 @@ These cover the majority of use cases and are the recommended starting point.
 
 | Method | Description |
 |--------|-------------|
-| `setDigitalVolume(channel, volume)` | Volume for one channel. `0x00` ≈ mute, `0x7F` = 0 dB, `0xFF` = +24 dB. |
+| `setDigitalVolume(channel, volume)` | Volume for one channel. `0x00` = mute, `0xC9` = 0 dB, `0xFF` = +27 dB. |
 | `setGainCalibration(channel, value)` | Fine gain trim per channel (0–15). |
-| `setPhaseCalibration(channel, value)` | Phase offset per channel (0–255). |
-| `enablePort(port, enable)` | Enable or disable a PDM input port (1–4). |
+| `setPhaseCalibration(channel, value)` | Phase delay per channel, in modulator clock cycles (0–255, ~163 ns each). |
+| `enablePort(port, enable)` | Select PDM as the input source for a port's two channels (ports 1–2; channels 5–8 are always PDM). Does not configure pins. |
 | `setPortEdgeLatchMode(port, mode)` | Choose which clock edge latches the even-numbered channel. |
 | `setASISlotAssignment(channel, slot)` | Assign a channel to a TDM slot (0–63). |
 | `setASIOutputLine(channel, pin)` | Route a channel to the primary or secondary SDOUT. |
@@ -340,9 +340,9 @@ These cover the majority of use cases and are the recommended starting point.
 | Method | Description |
 |--------|-------------|
 | `isConnected()` | Returns `true` if the device acknowledges on I2C. |
-| `getDeviceStatus(status0, status1)` | Read DEV_STS0 and DEV_STS1 registers. |
-| `getLatchedInterruptStatus(asi_error, pll_error)` | Read latched interrupt flags. |
-| `getAutodetectedClocks(fsync, ratio)` | Read auto-detected FSYNC and BCLK/FSYNC ratio (slave mode). |
+| `getDeviceStatus(status0, deviceModeStatus)` | Read DEV_STS0 and the device mode from DEV_STS1 (bits 7:5). |
+| `getLatchedInterruptStatus(asiBusClockError, pllLockError)` | Read latched interrupt flags. |
+| `getAutodetectedClocks(fsRate, ratio)` | Read auto-detected sample rate (as `FSRate`, e.g. `FSRATE_48` = 44.1 or 48 kHz) and BCLK/FSYNC ratio (slave mode). |
 
 ---
 
@@ -359,7 +359,7 @@ mic.updateRegisterBits(reg, mask, value);  // read-modify-write
 The PCMD3180 uses register paging (pages 0–4). This library implements page 0 only. To access other pages:
 
 ```cpp
-mic.writeRegister(0x00, page_number);  // select page
+mic.writeRegister(0x00, pageNumber);  // select page
 mic.writeRegister(reg, value);         // access register on that page
 mic.writeRegister(0x00, 0);            // return to page 0
 ```
@@ -400,23 +400,23 @@ Check your microphone's datasheet for its supported PDM clock range.
 
 The following device capabilities have no corresponding library method. All can be accessed using the low-level `writeRegister()` / `readRegister()` / `updateRegisterBits()` calls.
 
-**ASI_CFG2 register (0x09) — TX offset**
-The TX offset field (bits [4:0]) controls how many BCLKs after FSYNC the device waits before transmitting. There is no `setTXOffset()` method; the default value of 0 (transmit on the first BCLK after FSYNC) is suitable for standard I2S and TDM. If you need a non-zero offset, write directly:
+**ASI_CFG1 register (0x08) — TX offset**
+The TX_OFFSET field (bits [4:0]) offsets the MSB of slot 0 by 0–31 BCLK cycles with respect to the standard protocol timing. There is no `setTXOffset()` method; the default value of 0 (transmit on the first BCLK after FSYNC) is suitable for standard I2S and TDM. If you need a non-zero offset, write directly:
 ```cpp
-mic.updateRegisterBits(0x09, 0x1F, offset_value);
+mic.updateRegisterBits(0x08, 0x1F, offsetValue);
 ```
 
 **Biquad filter coefficients (pages 1–4)**
-`setBiquadCfg()` sets the number of active biquad stages (0–3), but the actual filter coefficients live in registers on pages 1–4 and are not accessible through any library method. To load custom coefficients you need to switch pages manually, write the coefficient registers, and return to page 0:
+`setBiquadConfig()` sets the number of active biquad stages (0–3), but the actual filter coefficients live in registers on pages 1–4 and are not accessible through any library method. To load custom coefficients you need to switch pages manually, write the coefficient registers, and return to page 0:
 ```cpp
 mic.writeRegister(0x00, 1);          // select page 1
-mic.writeRegister(coeff_reg, value); // write coefficient
+mic.writeRegister(coeffReg, value); // write coefficient
 mic.writeRegister(0x00, 0);          // return to page 0
 ```
 Refer to the datasheet section "Programmable Biquad Filter" for the register map and coefficient format.
 
-**I2C checksum (REG_I2C_CKSUM, 0x7E)**
-The hardware checksum feature for verifying I2C writes is not exposed. `setI2CBroadcast()` uses this register internally to set the broadcast bit, but the checksum enable bit itself has no dedicated method.
+**I2C checksum (I2C_CKSUM, 0x7E)**
+The device keeps a running checksum of I2C transactions in this register, which can be used to verify writes. There is no library method for it; read it with `readRegister(0x7E, value)`, and write to it to reset the checksum to the written value.
 
 ## Troubleshooting
 

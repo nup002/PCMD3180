@@ -4,20 +4,24 @@
 
 #include "PCMD3180.h"
 
-PCMD3180::PCMD3180(uint8_t shdnz_pin, uint8_t i2c_addr, bool areg_internal, AVDDInputVoltage avdd_input_voltage) {
-  _i2c_addr = i2c_addr;
-  _shdnz_pin = shdnz_pin;
-  _areg_internal = areg_internal;  // Whether AREG is set to be generated internally or externally
-  _avdd_input_voltage = avdd_input_voltage;
+PCMD3180::PCMD3180(uint8_t shdnzPin, uint8_t i2cAddr, bool aregInternal, AVDDInputVoltage avddInputVoltage) {
+  _i2cAddr = i2cAddr;
+  _shdnzPin = shdnzPin;
+  _aregInternal = aregInternal;  // Whether AREG is set to be generated internally or externally
+  _avddInputVoltage = avddInputVoltage;
   _wire = nullptr;
   _initialized = false;
-  hardwarePowerDown();
+  _sleepCfg = 0x00;
 }
 
-bool PCMD3180::begin(TwoWire &wirePort) {
-  _wire = &wirePort;
+bool PCMD3180::begin(TwoWire &wire) {
+  _wire = &wire;
   
-  // Pull SHDNZ pin high to take the device out of hardware shutdown
+  // Drive SHDNZ low to put the device in hardware shutdown, then high to take it out
+  if (_shdnzPin != PCMD3180_SHDNZ_PIN_DEFAULT) {
+    pinMode(_shdnzPin, OUTPUT);
+  }
+  hardwarePowerDown();
   hardwarePowerUp();
 
   // Check if device is present
@@ -30,13 +34,10 @@ bool PCMD3180::begin(TwoWire &wirePort) {
     return false;
   }
   
-  // Configure sleep mode - wake device and use internal AREG
+  // Exit sleep mode and select the AREG source given to the constructor
   if (!wakeUp()) {
     return false;
   }
-  
-  // Wait >= 1ms after entering active mode
-  delay(1);
   
   _initialized = true;
   return true;
@@ -48,8 +49,11 @@ bool PCMD3180::reset() {
     return false;
   }
   
-  // Wait >= 10ms after reset
+  // Wait 10ms after reset
   delay(10);
+
+  // All registers are back at their defaults
+  _sleepCfg = 0x00;
   
   return true;
 }
@@ -57,51 +61,55 @@ bool PCMD3180::reset() {
 /*
 Utility methods
 */
-bool PCMD3180::configureAsSlave(AudioFormat format, WordLength word_len, uint8_t num_channels) {
-  if (num_channels < 1 || num_channels > 8) {
+bool PCMD3180::configureAsSlave(AudioFormat format, WordLength wordLen, uint8_t numChannels) {
+  if (numChannels < 1 || numChannels > 8) {
     return false;
   }
   if (!setMasterMode(MODE_SLAVE)) return false;
   if (!setAutoClockConfigEnabled(true)) return false;
-  if (!setAutoclockPLLEnabled(true)) return false;
-  if (!setASIFormat(format, word_len)) return false;
-  if (!enableAllChannels(num_channels)) return false;
+  if (!setAutoClockPLLEnabled(true)) return false;
+  if (!setASIFormat(format, wordLen)) return false;
+  if (!enableAllChannels(numChannels)) return false;
   return true;
 }
 
-bool PCMD3180::configureAsMaster(AudioFormat format, WordLength word_len, FSRate fsync_rate, BCLKRatio bclk_ratio, uint8_t num_channels) {
-  if (num_channels < 1 || num_channels > 8) {
+bool PCMD3180::configureAsMaster(AudioFormat format, WordLength wordLen, FSRate fsyncRate, BCLKRatio bclkRatio, uint8_t numChannels) {
+  if (numChannels < 1 || numChannels > 8) {
     return false;
   }
   if (!setMasterMode(MODE_MASTER)) return false;
-  if (!setASIClock(fsync_rate, bclk_ratio)) return false;
-  if (!setASIFormat(format, word_len)) return false;
-  if (!enableAllChannels(num_channels)) return false;
+  if (!setASIClock(fsyncRate, bclkRatio)) return false;
+  if (!setASIFormat(format, wordLen)) return false;
+  if (!enableAllChannels(numChannels)) return false;
   return true;
 }
 
-bool PCMD3180::configurePDMInput(PDMClock clk, uint8_t num_channels) {
-  if (num_channels < 1 || num_channels > 8) {
+bool PCMD3180::configurePDMInput(PDMClock clk, uint8_t numChannels) {
+  if (numChannels < 1 || numChannels > 8) {
     return false;
   }
   if (!setPDMClock(clk)) return false;
 
-  // Enable ports in pairs: port 1 covers ch1+2, port 2 covers ch3+4, etc.
-  uint8_t num_ports = (num_channels + 1) / 2;
-  for (uint8_t port = 1; port <= num_ports; port++) {
+  // Each port carries two channels: port 1 covers ch1+2, port 2 covers ch3+4, etc.
+  // Per port: select PDM as the channels' input source, output PDMCLK on GPOx and
+  // take PDM data in on GPIx (datasheet 8.2.1.2, step 3d-3f)
+  uint8_t numPorts = (numChannels + 1) / 2;
+  for (uint8_t port = 1; port <= numPorts; port++) {
     if (!enablePort(port, true)) return false;
+    if (!setGPOMode(port, GPO_MODE_PDM, DRIVE_MODE_ACTIVE_LOW_ACTIVE_HIGH)) return false;
+    if (!setGPIMode(port, (GPIMode)(GPI_MODE_PDMDIN1 + port - 1))) return false;
   }
 
-  if (!enableAllChannels(num_channels)) return false;
+  if (!enableAllChannels(numChannels)) return false;
   return true;
 }
 
-bool PCMD3180::enableAllChannels(uint8_t num_channels) {
-  if (num_channels < 1 || num_channels > 8) {
+bool PCMD3180::enableAllChannels(uint8_t numChannels) {
+  if (numChannels < 1 || numChannels > 8) {
     return false;
   }
   // Channels are mapped MSB-first: ch1 = bit 7, ch2 = bit 6, etc.
-  uint8_t mask = (uint8_t)(0xFF00 >> num_channels);
+  uint8_t mask = (uint8_t)(0xFF00 >> numChannels);
   if (!enableChannels(mask)) return false;
   if (!enableOutputASIChannels(mask)) return false;
   return true;
@@ -117,50 +125,50 @@ bool PCMD3180::setAllChannelVolumes(uint8_t volume) {
 /*
 Read-methods
 */
-bool PCMD3180::getLatchedInterruptStatus(bool &asi_bus_clock_error, bool &pll_lock_error) {
+bool PCMD3180::getLatchedInterruptStatus(bool &asiBusClockError, bool &pllLockError) {
   uint8_t status;
   if (!readRegister(REG_INT_LTCH0, status)) {
     return false;
   }
-  asi_bus_clock_error = status & 0x80;
-  pll_lock_error = status & 0x40;
+  asiBusClockError = status & 0x80;
+  pllLockError = status & 0x40;
   return true;
 }
 
-bool PCMD3180::getAutodetectedClocks(uint32_t &fsync, uint32_t &ratio) {
+bool PCMD3180::getAutodetectedClocks(FSRate &fsRate, uint32_t &ratio) {
   uint8_t status;
   if (!readRegister(REG_ASI_STS, status)) {
     return false;
   }
-  uint8_t fsync_rate = (status & 0xF0) >> 4;
-  uint8_t fsync_ratio = status & 0x0F;
+  uint8_t fsyncRate = (status & 0xF0) >> 4;
+  uint8_t fsyncRatio = status & 0x0F;
 
-  static const uint32_t fsync_table[] = {7350, 14700, 22050, 29400, 44100, 88200, 176400, 352800, 705600};
-  static const uint16_t ratio_table[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 1024, 2048};
+  static const uint16_t ratioTable[] = {16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 1024, 2048};
 
-  if (fsync_rate >= sizeof(fsync_table)/sizeof(fsync_table[0])) {
+  // FS_RATE_STS uses the same encoding as FSRate; 9-14 are reserved and 15 is invalid
+  if (fsyncRate > FSRATE_768) {
     return false;
   }
 
-  if (fsync_ratio >= sizeof(ratio_table)/sizeof(ratio_table[0])) {
+  if (fsyncRatio >= sizeof(ratioTable)/sizeof(ratioTable[0])) {
     return false;
   }
 
-  fsync = fsync_table[fsync_rate];
-  ratio = ratio_table[fsync_ratio];
+  fsRate = (FSRate)fsyncRate;
+  ratio = ratioTable[fsyncRatio];
   return true;
 }
 
-bool PCMD3180::getGPIOMonitorValue(uint8_t &monitor_value) {
+bool PCMD3180::getGPIOMonitorValue(uint8_t &monitorValue) {
   uint8_t status;
   if (!readRegister(REG_GPIO_MON, status)) {
     return false;
   }
-  monitor_value = (status & 0x80) >> 7;
+  monitorValue = (status & 0x80) >> 7;
   return true;
 }
 
-bool PCMD3180::getGPIMonitorValue(uint8_t port, uint8_t &monitor_value) {
+bool PCMD3180::getGPIMonitorValue(uint8_t port, uint8_t &monitorValue) {
   if (port < 1 || port > 4) {
     return false;
   }
@@ -169,11 +177,11 @@ bool PCMD3180::getGPIMonitorValue(uint8_t port, uint8_t &monitor_value) {
     return false;
   }
   uint8_t mask = 0x80 >> (port - 1);
-  monitor_value = (status & mask) >> (8 - port);
+  monitorValue = (status & mask) >> (8 - port);
   return true;
 }
 
-bool PCMD3180::getDeviceStatus(uint8_t &status0, uint8_t &device_mode_status) {
+bool PCMD3180::getDeviceStatus(uint8_t &status0, uint8_t &deviceModeStatus) {
   if (!readRegister(REG_DEV_STS0, status0)) {
     return false;
   }
@@ -181,30 +189,41 @@ bool PCMD3180::getDeviceStatus(uint8_t &status0, uint8_t &device_mode_status) {
   if (!readRegister(REG_DEV_STS1, sts1)) {
     return false;
   }
-  device_mode_status = sts1 >> 5;
+  deviceModeStatus = sts1 >> 5;
   return true;
 }
 
-
+/*
+Sleep and wake (SLEEP_CFG SLEEP_ENZ)
+*/
 bool PCMD3180::wakeUp() {
-  if (!updateRegisterBits(REG_SLEEP_CFG, 0x01, 0x01)) {
+  // Datasheet 6.4.2: no I2C transactions other than the exit write are allowed in sleep mode,
+  // and AREG_SELECT must be configured while exiting sleep, so set SLEEP_ENZ and AREG_SELECT in
+  // one write. VREF_QCHG and I2C_BRDCAST_EN are restored from the value saved by sleep().
+  uint8_t sleepCfg = (_sleepCfg & 0x1C) | (_aregInternal ? 0x80 : 0x00) | 0x01;
+  if (!writeRegister(REG_SLEEP_CFG, sleepCfg)) {
     return false;
   }
+  // Wait >= 1ms for the internal wake-up sequence (datasheet 6.4.3)
   delay(1);
 
-  if (!setAREG(_areg_internal)){
-    return false;
-  }
-  if (_avdd_input_voltage == AVDD_INPUT_18V){
+  if (_avddInputVoltage == AVDD_INPUT_18V){
     return updateRegisterBits(REG_BIAS_CFG, 0x03, 0x02);
   }
   return true;
 }
 
 bool PCMD3180::sleep() {
-  if (!updateRegisterBits(REG_SLEEP_CFG, 0x01, 0x00)) {
+  uint8_t sleepCfg;
+  if (!readRegister(REG_SLEEP_CFG, sleepCfg)) {
     return false;
   }
+  // Save SLEEP_CFG so wakeUp() can restore it without reading in sleep mode
+  _sleepCfg = sleepCfg & ~0x01;
+  if (!writeRegister(REG_SLEEP_CFG, _sleepCfg)) {
+    return false;
+  }
+  // Wait >= 10ms before the next I2C transaction (datasheet 6.4.2)
   delay(10);
   return true;
 }
@@ -213,6 +232,7 @@ bool PCMD3180::sleep() {
 SLEEP_CFG register methods
 */
 bool PCMD3180::setAREG(bool internal) {
+  _aregInternal = internal;
   if (!updateRegisterBits(REG_SLEEP_CFG, 0x80, internal ? 0x80 : 0x00)) {
     return false;
   }
@@ -253,15 +273,18 @@ bool PCMD3180::setI2CBroadcast(bool enable) {
 /*
 SHDN_CFG register methods
 */
-bool PCMD3180::setShutdownMode(SHUTDOWNMode mode) {
+bool PCMD3180::setShutdownMode(ShutdownMode mode) {
   uint8_t cfg = 0x00;
   switch (mode) {
     case SHUTDOWN_DREG_IMMEDIATELY:
       cfg = 0x00;
-    case SHUTDOWN_DREG_ACTIVE_UNTIL_TIMOUT:
+      break;
+    case SHUTDOWN_DREG_ACTIVE_UNTIL_TIMEOUT:
       cfg = 0x04;
+      break;
     case SHUTDOWN_DREG_ACTIVE_UNTIL_SHUTDOWN:
       cfg = 0x08;
+      break;
     default:
       return false;
   }
@@ -298,71 +321,71 @@ bool PCMD3180::setDREGActiveTime(DREGActiveTime time) {
 ASI_CFG0 register methods
 */
 bool PCMD3180::setASIFormat(AudioFormat format, WordLength wordLen) {
-  uint8_t asi_cfg0 = 0;
+  uint8_t asiCfg0 = 0;
   
   // Set audio format
   switch (format) {
     case FORMAT_I2S:
-      asi_cfg0 |= 0x40;
+      asiCfg0 |= 0x40;
       break;
     case FORMAT_TDM:
-      asi_cfg0 |= 0x00;
+      asiCfg0 |= 0x00;
       break;
     case FORMAT_LEFT_JUSTIFIED:
-      asi_cfg0 |= 0x80;
+      asiCfg0 |= 0x80;
       break;
   }
   
   // Set word length
   switch (wordLen) {
     case WORD_16_BIT:
-      asi_cfg0 |= 0x00;
+      asiCfg0 |= 0x00;
       break;
     case WORD_20_BIT:
-      asi_cfg0 |= 0x10;
+      asiCfg0 |= 0x10;
       break;
     case WORD_24_BIT:
-      asi_cfg0 |= 0x20;
+      asiCfg0 |= 0x20;
       break;
     case WORD_32_BIT:
-      asi_cfg0 |= 0x30;
+      asiCfg0 |= 0x30;
       break;
   }
   
   // Write configurations
-  if (!updateRegisterBits(REG_ASI_CFG0, 0xFC, asi_cfg0)) {
+  if (!updateRegisterBits(REG_ASI_CFG0, 0xF0, asiCfg0)) {
     return false;
   }
   return true;
 }
 
-bool PCMD3180::setASIPolarities(ASIPolarity fsyncPolarity, ASIPolarity blckPolarity) {
-  uint8_t asi_cfg0 = 0;
+bool PCMD3180::setASIPolarities(ASIPolarity fsyncPolarity, ASIPolarity bclkPolarity) {
+  uint8_t asiCfg0 = 0;
   
   // Set FSYNC polarity
   switch (fsyncPolarity) {
     case ASI_POLARITY_STANDARD:
       break;
     case ASI_POLARITY_INVERTED:
-      asi_cfg0 |= 0x08;
+      asiCfg0 |= 0x08;
       break;
     default:
       return false;
   }
 
-  // Set BLCK polarity
-  switch (blckPolarity) {
+  // Set BCLK polarity
+  switch (bclkPolarity) {
     case ASI_POLARITY_STANDARD:
       break;
     case ASI_POLARITY_INVERTED:
-      asi_cfg0 |= 0x04;
+      asiCfg0 |= 0x04;
       break;
     default:
       return false;
   }
   
   // Write configurations
-  if (!updateRegisterBits(REG_ASI_CFG0, 0x0C, asi_cfg0)) {
+  if (!updateRegisterBits(REG_ASI_CFG0, 0x0C, asiCfg0)) {
     return false;
   }
   return true;
@@ -372,49 +395,49 @@ bool PCMD3180::setASIPolarities(ASIPolarity fsyncPolarity, ASIPolarity blckPolar
 ASI_CFG2 register methods
 */
 bool PCMD3180::setASIErrorDetection(bool enableErrorDetection, bool enableAutoResumeOnRecovery) {
-  uint8_t asi_cfg1 = 0;
+  uint8_t asiCfg2 = 0;
 
   if (!enableErrorDetection) {
-    asi_cfg1 |= 0x20;
+    asiCfg2 |= 0x20;
   }
   if (!enableAutoResumeOnRecovery) {
-    asi_cfg1 |= 0x10;
+    asiCfg2 |= 0x10;
   }
 
   // Write configurations
-  if (!updateRegisterBits(REG_ASI_CFG1, 0x30, asi_cfg1)) {
+  if (!updateRegisterBits(REG_ASI_CFG2, 0x30, asiCfg2)) {
     return false;
   }
   return true;
 }
 
 bool PCMD3180::setASIDaisyChained(bool enableDaisyChain) {
-  return updateRegisterBits(REG_ASI_CFG1, 0xF0, enableDaisyChain ? 0xF0 : 0x00);
+  return updateRegisterBits(REG_ASI_CFG2, 0x80, enableDaisyChain ? 0x80 : 0x00);
 }
 
 
 /*
-ASI_CH1 to ASI_CH7 register methods
+ASI_CH1 to ASI_CH8 register methods
 */
 bool PCMD3180::setASISlotAssignment(uint8_t channel, uint8_t slot) {
   if ((slot > 63) || (channel < 1 || channel > 8)) {
     return false;
   }
-  uint8_t asi_slot_reg = REG_ASI_CH1 + channel - 1;
-  return writeRegister(asi_slot_reg, slot);
+  uint8_t asiSlotReg = REG_ASI_CH1 + channel - 1;
+  return updateRegisterBits(asiSlotReg, 0x3F, slot);
 }
 
-bool PCMD3180::setASIOutputLine(uint8_t channel, ASIPIN asi_pin) {
+bool PCMD3180::setASIOutputLine(uint8_t channel, ASIPin asiPin) {
   if (channel < 1 || channel > 8) {
     return false;
   }
-  uint8_t asi_slot_reg = REG_ASI_CH1 + channel - 1;
+  uint8_t asiSlotReg = REG_ASI_CH1 + channel - 1;
 
-  uint8_t cfg = 0x00;
-  if (asi_pin == ASIPIN_PRIMARY) {
-    cfg = 0x40;  
+  uint8_t cfg = 0x40;
+  if (asiPin == ASIPIN_PRIMARY) {
+    cfg = 0x00;  
   }
-  return updateRegisterBits(asi_slot_reg, 0x40, cfg);
+  return updateRegisterBits(asiSlotReg, 0x40, cfg);
 }
 
 /*
@@ -426,20 +449,20 @@ bool PCMD3180::setMasterMode(MasterMode masterMode) {
 }
 
 
-bool PCMD3180::setMasterConfig(bool enable_gated_fsync_and_bclk, FSMode fs_mode) {
+bool PCMD3180::setMasterConfig(bool enableGatedFsyncAndBclk, FSMode fsMode) {
   uint8_t cfg = 0;
-  if (enable_gated_fsync_and_bclk) {
+  if (enableGatedFsyncAndBclk) {
     cfg |= 0x10;
   }
-  if (fs_mode == FSYNC_MODE_44100) {
+  if (fsMode == FSYNC_MODE_44100) {
     cfg |= 0x08;
   }
   return updateRegisterBits(REG_MST_CFG0, 0x18, cfg);
 }
 
-bool PCMD3180::setASIClock(FSRate fsync_rate, BCLKRatio bclk_ratio) {
+bool PCMD3180::setASIClock(FSRate fsyncRate, BCLKRatio bclkRatio) {
   uint8_t cfg = 0;
-  switch (fsync_rate) {
+  switch (fsyncRate) {
     case FSRATE_8:
       cfg = 0x00;
       break;
@@ -471,7 +494,7 @@ bool PCMD3180::setASIClock(FSRate fsync_rate, BCLKRatio bclk_ratio) {
       return false;
   };
 
-  switch (bclk_ratio) {
+  switch (bclkRatio) {
     case BCLKRATIO_16:
       cfg |= 0x00;
       break;
@@ -518,19 +541,19 @@ bool PCMD3180::setASIClock(FSRate fsync_rate, BCLKRatio bclk_ratio) {
 }
 
 /*
-Slave mode clock configuration
+Auto clock configuration (MST_CFG0) and slave mode clock source (CLK_SRC)
 */
-bool PCMD3180::setAutoClockConfigEnabled(bool auto_clock_config_enabled) {
-  return updateRegisterBits(REG_MST_CFG1, 0x40, auto_clock_config_enabled ? 0x40 : 0x00);
+bool PCMD3180::setAutoClockConfigEnabled(bool autoClockConfigEnabled) {
+  return updateRegisterBits(REG_MST_CFG0, 0x40, autoClockConfigEnabled ? 0x00 : 0x40);
 }
 
-bool PCMD3180::setAutoclockPLLEnabled(bool PLL_enabled) {
-  return updateRegisterBits(REG_MST_CFG1, 0x10, PLL_enabled ? 0x10 : 0x00);
+bool PCMD3180::setAutoClockPLLEnabled(bool pllEnabled) {
+  return updateRegisterBits(REG_MST_CFG0, 0x20, pllEnabled ? 0x00 : 0x20);
 }
 
-bool PCMD3180::setDisabledPLLClockSource(PLLSlaveClockSource clk_source) {
+bool PCMD3180::setDisabledPLLClockSource(PLLSlaveClockSource clkSource) {
   uint8_t cfg = 0;
-  if (clk_source == PLLSLAVECLKSRC_MCLK) {
+  if (clkSource == PLLSLAVECLKSRC_MCLK) {
     cfg = 0x80;
   }
   return updateRegisterBits(REG_CLK_SRC, 0x80, cfg);
@@ -541,42 +564,42 @@ bool PCMD3180::setDisabledPLLClockSource(PLLSlaveClockSource clk_source) {
 PDMCLK_CFG register methods
 */
 bool PCMD3180::setPDMClock(PDMClock clk) {
-  uint8_t pdmclk_val = 0;
+  uint8_t pdmclkVal = 0;
   
   switch (clk) {
     case PDMCLK_2822_KHZ:
-      pdmclk_val = 0X00;
+      pdmclkVal = 0X00;
       break;
     case PDMCLK_1411_KHZ:
-      pdmclk_val = 0X01;
+      pdmclkVal = 0X01;
       break;
     case PDMCLK_705_KHZ:
-      pdmclk_val = 0X02;
+      pdmclkVal = 0X02;
       break;
     case PDMCLK_5644_KHZ:
-      pdmclk_val = 0X03;
+      pdmclkVal = 0X03;
       break;
   }
   
-  return writeRegister(REG_PDMCLK_CFG, 0x40 | pdmclk_val);
+  return writeRegister(REG_PDMCLK_CFG, 0x40 | pdmclkVal);
 }
 
 /*
-PDMDIN_CFG register methods
+PDMIN_CFG register methods
 */
-bool PCMD3180::setPortEdgeLatchMode(uint8_t port, EDGELatchMode mode) {
+bool PCMD3180::setPortEdgeLatchMode(uint8_t port, EdgeLatchMode mode) {
   if (port < 1 || port > 4) {
     return false;
   }
   uint8_t mask = 0x80 >> (port - 1);
-  uint8_t cfg = ((mode == EDGE_MODE_EVEN_NEGATIVE) ? 0x00 : 0x80) >> (port - 1);
+  uint8_t cfg = ((mode == EDGE_MODE_EVEN_POSITIVE) ? 0x00 : 0x80) >> (port - 1);
   return updateRegisterBits(REG_PDMIN_CFG, mask, cfg);
 }
 
 /*
 GPIO_CFG0  register methods
 */
-bool PCMD3180::setGPIOConfig(GPIOMode mode, DRIVEMode drive_mode) {
+bool PCMD3180::setGPIOConfig(GPIOMode mode, DriveMode driveMode) {
   uint8_t cfg = 0;
   switch (mode) {
     case GPIO_MODE_DISABLED:
@@ -622,7 +645,7 @@ bool PCMD3180::setGPIOConfig(GPIOMode mode, DRIVEMode drive_mode) {
       return false;
   };
 
-  switch (drive_mode) {
+  switch (driveMode) {
     case DRIVE_MODE_HI_Z:
       cfg |= 0;
       break;
@@ -650,7 +673,7 @@ bool PCMD3180::setGPIOConfig(GPIOMode mode, DRIVEMode drive_mode) {
 /*
 GPO_CFG0 to GPO_CFG3 register methods
 */
-bool PCMD3180::setGPOMode(uint8_t port, GPOMode mode, DRIVEMode drive_mode) {
+bool PCMD3180::setGPOMode(uint8_t port, GPOMode mode, DriveMode driveMode) {
   if (port < 1 || port > 4) {
     return false;
   }
@@ -675,7 +698,7 @@ bool PCMD3180::setGPOMode(uint8_t port, GPOMode mode, DRIVEMode drive_mode) {
       return false;
   }
 
-  switch (drive_mode) {
+  switch (driveMode) {
     case DRIVE_MODE_HI_Z:
       cfg |= 0;
       break;
@@ -686,24 +709,24 @@ bool PCMD3180::setGPOMode(uint8_t port, GPOMode mode, DRIVEMode drive_mode) {
       return false;
   }
 
-  uint8_t gpo_mode_reg = REG_GPO_CFG0 + (port - 1);
-  return writeRegister(gpo_mode_reg, cfg);
+  uint8_t gpoModeReg = REG_GPO_CFG0 + (port - 1);
+  return writeRegister(gpoModeReg, cfg);
 }
 
 /*
 GPO_VAL register methods
 */
-bool PCMD3180::setGPIOVal(bool drive_high) {
-  return updateRegisterBits(REG_GPO_VAL, 0x80, drive_high ? 0x80 : 0x00);
+bool PCMD3180::setGPIOVal(bool driveHigh) {
+  return updateRegisterBits(REG_GPO_VAL, 0x80, driveHigh ? 0x80 : 0x00);
 }
 
-bool PCMD3180::setGPOVal(uint8_t port, bool drive_high) {
+bool PCMD3180::setGPOVal(uint8_t port, bool driveHigh) {
   if (port < 1 || port > 4) {
     return false;
   }
-  uint8_t cfg = drive_high ? 0x80 : 0x00;
+  uint8_t cfg = driveHigh ? 0x40 : 0x00;
   cfg = cfg >> (port - 1);
-  uint8_t mask = 0x80 >> (port - 1);
+  uint8_t mask = 0x40 >> (port - 1);
   return updateRegisterBits(REG_GPO_VAL, mask, cfg);
 }
 
@@ -714,55 +737,55 @@ bool PCMD3180::setGPIMode(uint8_t port, GPIMode mode) {
   if (port < 1 || port > 4) {
     return false;
   }
-  uint8_t mode_val;
+  uint8_t modeVal;
   switch (mode) {
     case GPI_MODE_DISABLED:
-      mode_val = 0x00;
+      modeVal = 0x00;
       break;
     case GPI_MODE_GPI:
-      mode_val = 0x01;
+      modeVal = 0x01;
       break;
     case GPI_MODE_MCLK:
-      mode_val = 0x02;
+      modeVal = 0x02;
       break;
     case GPI_MODE_ASI:
-      mode_val = 0x03;
+      modeVal = 0x03;
       break;
     case GPI_MODE_PDMDIN1:
-      mode_val = 0x04;
+      modeVal = 0x04;
       break;
     case GPI_MODE_PDMDIN2:
-      mode_val = 0x05;
+      modeVal = 0x05;
       break;
     case GPI_MODE_PDMDIN3:
-      mode_val = 0x06;
+      modeVal = 0x06;
       break;
     case GPI_MODE_PDMDIN4:
-      mode_val = 0x07;
+      modeVal = 0x07;
       break;
     default:
       return false;
   }
-  uint8_t gpi_mode_reg = REG_GPI_CFG0 + (port - 1) / 2; // Port 1 and 2 uses register 2B, port 3 and 4 uses 2C
+  uint8_t gpiModeReg = REG_GPI_CFG0 + (port - 1) / 2; // Port 1 and 2 uses register 2B, port 3 and 4 uses 2C
   uint8_t mask = 0b00000111;
   if ((port == 1) || (port == 3)) {
-    mode_val <<= 4; // The mode value is written to bits 6-4 for port 1 and 3, and bits 2-0 for port 2 and 4
+    modeVal <<= 4; // The mode value is written to bits 6-4 for port 1 and 3, and bits 2-0 for port 2 and 4
     mask <<= 4;
   }
-  return updateRegisterBits(gpi_mode_reg, mask, mode_val);
+  return updateRegisterBits(gpiModeReg, mask, modeVal);
 }
 
 /*
 INT_CFG and INT_MASK0 register methods
 */
-bool PCMD3180::setInterruptConfig(INTMode mode, INTLatchReadMode latch_mode, INTPolarity polarity) {
+bool PCMD3180::setInterruptConfig(INTMode mode, INTLatchReadMode latchMode, INTPolarity polarity) {
   uint8_t cfg = 0;
   switch (mode) {
     case INT_MODE_ASSERT_CONSTANT:
       cfg |= 0x00;
       break;
     case INT_MODE_ASSERT_2MS_PULSED:
-      cfg |= 0x01 << 5;
+      cfg |= 0x02 << 5;
       break;
     case INT_MODE_ASSERT_2MS_ONCE:
       cfg |= 0x03 << 5;
@@ -771,7 +794,7 @@ bool PCMD3180::setInterruptConfig(INTMode mode, INTLatchReadMode latch_mode, INT
       return false;
   }
 
-  if (latch_mode == INT_LATCH_MODE_READ_ONLY_UNMASKED){
+  if (latchMode == INT_LATCH_MODE_READ_ONLY_UNMASKED){
     cfg |= 0x04;
   }
 
@@ -782,25 +805,25 @@ bool PCMD3180::setInterruptConfig(INTMode mode, INTLatchReadMode latch_mode, INT
   return writeRegister(REG_INT_CFG, cfg);
 }
 
-bool PCMD3180::setInterruptMasks(bool mask_asi_clock_error, bool mask_pll_lock_interrupt) {
+bool PCMD3180::setInterruptMasks(bool maskAsiClockError, bool maskPllLockInterrupt) {
   uint8_t cfg = 0x00;
-  if (mask_asi_clock_error){
+  if (maskAsiClockError){
     cfg |= 0x80;
   }
 
-  if (mask_pll_lock_interrupt){
+  if (maskPllLockInterrupt){
     cfg |= 0x40;
   }
 
-  return writeRegister(REG_INT_MASK0, cfg);
+  return updateRegisterBits(REG_INT_MASK0, 0xC0, cfg);
 }
 
 /*
 BIAS_CFG register methods
 */
-bool PCMD3180::configureBIAS(MICBIASmode micbias_mode, VREFmode vref_mode) {
+bool PCMD3180::configureBias(MICBIASMode micbiasMode, VREFMode vrefMode) {
   uint8_t cfg = 0x00;
-  switch (micbias_mode) {
+  switch (micbiasMode) {
     case MICBIAS_MODE_AVDD:
       cfg |= 0x60;
       break;
@@ -811,7 +834,7 @@ bool PCMD3180::configureBIAS(MICBIASmode micbias_mode, VREFmode vref_mode) {
       return false;
   };
 
-  switch (vref_mode) {
+  switch (vrefMode) {
     case VREF_MODE_275V:
       cfg |= 0x00;
       break;
@@ -836,13 +859,18 @@ bool PCMD3180::enablePort(uint8_t port, bool enable) {
     return false;
   }
 
-  uint8_t input_pdm_reg = REG_CH1_CFG0 + 5 * (port - 1);
-
-  if (enable) {
-    return writeRegister(input_pdm_reg, 0x40);
-  } else {
-    return writeRegister(input_pdm_reg, 0x00);
+  // Only channels 1-4 have a selectable input source; channels 5-8 (ports 3 and 4) are always PDM
+  if (port > 2) {
+    return true;
   }
+
+  // CHx_INSRC, bits 6:5: 2 = digital microphone PDM input, 0 = input source not enabled
+  uint8_t insrc = enable ? 0x40 : 0x00;
+  uint8_t firstChannelReg = REG_CH1_CFG0 + 10 * (port - 1);
+  if (!updateRegisterBits(firstChannelReg, 0x60, insrc)) {
+    return false;
+  }
+  return updateRegisterBits(firstChannelReg + 5, 0x60, insrc);
 }
 
 bool PCMD3180::setDigitalVolume(uint8_t channel, uint8_t volume) {
@@ -851,41 +879,41 @@ bool PCMD3180::setDigitalVolume(uint8_t channel, uint8_t volume) {
   }
   
   // Calculate register address for channel volume
-  uint8_t vol_reg = REG_CH1_CFG2 + ((channel - 1) * 5);
+  uint8_t volReg = REG_CH1_CFG2 + ((channel - 1) * 5);
   
-  return writeRegister(vol_reg, volume);
+  return writeRegister(volReg, volume);
 }
 
-bool PCMD3180::setGainCalibration(uint8_t channel, uint8_t gain_calibration) {
+bool PCMD3180::setGainCalibration(uint8_t channel, uint8_t gainCalibration) {
   if (channel < 1 || channel > 8) {
     return false;
   }
   
-  if (gain_calibration > 15) {
+  if (gainCalibration > 15) {
     return false;
   }
 
   // Calculate register address for channel gain calibration
-  uint8_t gain_reg = REG_CH1_CFG3 + ((channel - 1) * 5);
+  uint8_t gainReg = REG_CH1_CFG3 + ((channel - 1) * 5);
   
-  return writeRegister(gain_reg, gain_calibration << 4);
+  return writeRegister(gainReg, gainCalibration << 4);
 }
 
-bool PCMD3180::setPhaseCalibration(uint8_t channel, uint8_t phase_calibration) {
+bool PCMD3180::setPhaseCalibration(uint8_t channel, uint8_t phaseCalibration) {
   if (channel < 1 || channel > 8) {
     return false;
   }
 
   // Calculate register address for channel phase calibration
-  uint8_t phase_reg = REG_CH1_CFG4 + ((channel - 1) * 5);
+  uint8_t phaseReg = REG_CH1_CFG4 + ((channel - 1) * 5);
   
-  return writeRegister(phase_reg, phase_calibration);
+  return writeRegister(phaseReg, phaseCalibration);
 }
 
 /*
 DSP_CFG0 register methods
 */
-bool PCMD3180::setDecimationFilterMode(FILTERmode mode) {
+bool PCMD3180::setDecimationFilterMode(FilterMode mode) {
   uint8_t cfg;
   switch (mode) {
     case FILTER_MODE_LINEAR:
@@ -903,7 +931,7 @@ bool PCMD3180::setDecimationFilterMode(FILTERmode mode) {
   return updateRegisterBits(REG_DSP_CFG0, 0x30, cfg);
 }
 
-bool PCMD3180::setChannelSummationMode(SUMMATIONmode mode) {
+bool PCMD3180::setChannelSummationMode(SummationMode mode) {
   uint8_t cfg;
   switch (mode) {
     case SUMMATION_MODE_DISABLED:
@@ -921,7 +949,7 @@ bool PCMD3180::setChannelSummationMode(SUMMATIONmode mode) {
   return updateRegisterBits(REG_DSP_CFG0, 0x0C, cfg);
 }
 
-bool PCMD3180::setHighpassFilterMode(HPFILTERmode mode) {
+bool PCMD3180::setHighpassFilterMode(HPFilterMode mode) {
   uint8_t cfg;
   switch (mode) {
     case HP_FILTER_MODE_CUSTOM:
@@ -945,36 +973,36 @@ bool PCMD3180::setHighpassFilterMode(HPFILTERmode mode) {
 /*
 DSP_CFG1 register methods
 */
-bool PCMD3180::setDigitalVolumeCfg(bool ganged_digital_volume) {
-  return updateRegisterBits(REG_DSP_CFG1, 0x80, ganged_digital_volume ? 0x80 : 0x00);
+bool PCMD3180::setDigitalVolumeConfig(bool gangedDigitalVolume) {
+  return updateRegisterBits(REG_DSP_CFG1, 0x80, gangedDigitalVolume ? 0x80 : 0x00);
 }
 
-bool PCMD3180::setBiquadCfg(uint8_t num_biquads) {
-  if (num_biquads > 3) {
+bool PCMD3180::setBiquadConfig(uint8_t numBiquads) {
+  if (numBiquads > 3) {
     return false;
   }
-  uint8_t cfg = num_biquads << 5;
+  uint8_t cfg = numBiquads << 5;
   return updateRegisterBits(REG_DSP_CFG1, 0x60, cfg);
 }
 
-bool PCMD3180::setSoftStepEnabled(bool soft_step_enabled) {
-  return updateRegisterBits(REG_DSP_CFG1, 0x10, soft_step_enabled ? 0x00 : 0x10);
+bool PCMD3180::setSoftStepEnabled(bool softStepEnabled) {
+  return updateRegisterBits(REG_DSP_CFG1, 0x10, softStepEnabled ? 0x00 : 0x10);
 }
 
 /*
 IN_CH_EN register methods
 */
-bool PCMD3180::enableChannels(uint8_t ch_mask) {
+bool PCMD3180::enableChannels(uint8_t chMask) {
   // IN_CH_EN register - bit 7 = CH1, bit 6 = CH2, etc.
-  return writeRegister(REG_IN_CH_EN, ch_mask);
+  return writeRegister(REG_IN_CH_EN, chMask);
 }
 
 /*
 ASI_OUT_CH_EN register methods
 */
-bool PCMD3180::enableOutputASIChannels(uint8_t ch_mask) {
+bool PCMD3180::enableOutputASIChannels(uint8_t chMask) {
   // ASI_OUT_CH_EN register - bit 7 = CH1, bit 6 = CH2, etc.
-  return writeRegister(REG_ASI_OUT_CH_EN, ch_mask);
+  return writeRegister(REG_ASI_OUT_CH_EN, chMask);
 }
 
 /*
@@ -995,8 +1023,8 @@ bool PCMD3180::powerPLL(bool power) {
   return updateRegisterBits(REG_PWR_CFG, 0x20, value);
 }
 
-bool PCMD3180::setDynamicPowerUpConfig(bool enable_dynamic_power_up, DYNAMICPOWERMode mode) {
-  uint8_t cfg = enable_dynamic_power_up ? 0x10 : 0x00;
+bool PCMD3180::setDynamicPowerUpConfig(bool enableDynamicPowerUp, DynamicPowerMode mode) {
+  uint8_t cfg = enableDynamicPowerUp ? 0x10 : 0x00;
 
   switch (mode) {
     case DYNAMIC_POWER_ENABLE_CH1_TO_CH2:
@@ -1020,19 +1048,21 @@ bool PCMD3180::setDynamicPowerUpConfig(bool enable_dynamic_power_up, DYNAMICPOWE
 
 
 bool PCMD3180::hardwarePowerUp() {
-  if (_shdnz_pin == 0xFF) {
+  if (_shdnzPin == 0xFF) {
     return false;
   }
-  digitalWrite(_shdnz_pin, HIGH);
+  digitalWrite(_shdnzPin, HIGH);
   delay(1);
+  // Releasing SHDNZ resets all registers to their defaults
+  _sleepCfg = 0x00;
   return true;
 }
 
 bool PCMD3180::hardwarePowerDown() {
-  if (_shdnz_pin == 0xFF) {
+  if (_shdnzPin == 0xFF) {
     return false;
   }
-  digitalWrite(_shdnz_pin, LOW);
+  digitalWrite(_shdnzPin, LOW);
   delay(50);
   return true;
 }
@@ -1045,7 +1075,7 @@ bool PCMD3180::writeRegister(uint8_t reg, uint8_t value) {
     return false;
   }
   
-  _wire->beginTransmission(_i2c_addr);
+  _wire->beginTransmission(_i2cAddr);
   _wire->write(reg);
   _wire->write(value);
   
@@ -1057,14 +1087,14 @@ bool PCMD3180::readRegister(uint8_t reg, uint8_t &value) {
     return false;
   }
   
-  _wire->beginTransmission(_i2c_addr);
+  _wire->beginTransmission(_i2cAddr);
   _wire->write(reg);
   
   if (_wire->endTransmission(false) != 0) {
     return false;
   }
   
-  if (_wire->requestFrom(_i2c_addr, (uint8_t)1) != 1) {
+  if (_wire->requestFrom(_i2cAddr, (uint8_t)1) != 1) {
     return false;
   }
   
@@ -1073,15 +1103,15 @@ bool PCMD3180::readRegister(uint8_t reg, uint8_t &value) {
 }
 
 bool PCMD3180::updateRegisterBits(uint8_t reg, uint8_t mask, uint8_t value) {
-  uint8_t current_val;
+  uint8_t currentVal;
   
-  if (!readRegister(reg, current_val)) {
+  if (!readRegister(reg, currentVal)) {
     return false;
   }
   
-  uint8_t new_val = (current_val & ~mask) | (value & mask);
+  uint8_t newVal = (currentVal & ~mask) | (value & mask);
   
-  return writeRegister(reg, new_val);
+  return writeRegister(reg, newVal);
 }
 
 bool PCMD3180::isConnected() {
@@ -1089,6 +1119,6 @@ bool PCMD3180::isConnected() {
     return false;
   }
   
-  _wire->beginTransmission(_i2c_addr);
+  _wire->beginTransmission(_i2cAddr);
   return (_wire->endTransmission() == 0);
 }
