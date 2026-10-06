@@ -2,7 +2,7 @@
 
 A fully-featured Arduino library for the [Texas Instruments PCMD3180](https://www.ti.com/product/PCMD3180) eight-channel PDM-to-PCM converter, controlled over I2C or SPI.
 
-> **Version 0.1.0 — early release.** The API may still change. Master mode, SPI control and the programmable coefficients have not yet been tested on hardware.
+> **Version 0.1.0 -- early release.** The API may still change. Master mode, SPI control and the programmable coefficients have not yet been tested on hardware.
 
 ## Overview
 
@@ -33,9 +33,9 @@ lib_deps = https://github.com/nup002/PCMD3180.git
 **Manually:** download this repository as a ZIP and use *Sketch → Include Library → Add .ZIP Library…* in the Arduino IDE.
 
 ### Examples
-- **Basic** — I2C, 8-channel TDM slave, prints device status
-- **SPIBasic** — the same over SPI
-- **TeensyTDMStreaming** — Teensy 4.x with the Teensy Audio library: captures eight microphones and streams them over USB
+- **Basic** -- I2C, 8-channel TDM slave, prints device status
+- **SPIBasic** -- the same over SPI
+- **TeensyTDMStreaming** -- Teensy 4.x with the Teensy Audio library: captures eight microphones and streams them over USB
 - 
 ## Hardware Setup
 
