@@ -154,6 +154,10 @@ void loop() {}
 Use this when the PCMD3180 is the clock source on the bus, for example when connecting
 directly to an MCU I2S peripheral in slave mode.
 
+In master mode the PLL needs a master clock (MCLK) on GPIO1 or one of the GPI pins. Tell the
+library its frequency, and configure the pin it arrives on. When all four GPI pins are used for
+PDM data (more than 6 channels), MCLK must come in on GPIO1.
+
 **Warning: Master mode has not been tested**
 ```cpp
 #include <Wire.h>
@@ -168,8 +172,11 @@ void setup() {
     while (1);
   }
 
+  // 12.288 MHz MCLK on GPIO1
+  mic.setGPIOConfig(GPIO_MODE_MCLK, DRIVE_MODE_HI_Z);
+
   // I2S master at 48 kHz, BCLK = 64 × FSYNC = 3.072 MHz
-  mic.configureAsMaster(FORMAT_I2S, WORD_32_BIT, FSRATE_48, BCLKRATIO_64, 2);
+  mic.configureAsMaster(FORMAT_I2S, WORD_32_BIT, FSRATE_48, BCLKRATIO_64, 2, MCLK_FREQ_12288_KHZ);
   mic.configurePDMInput(PDMCLK_2822_KHZ, 2);
   mic.powerPDM(true);
   mic.powerPLL(true);
@@ -300,7 +307,7 @@ These cover the majority of use cases and are the recommended starting point.
 |--------|-------------|
 | `begin(wire)` | Initialize device, reset, wake. Returns `false` if not found on I2C. |
 | `configureAsSlave(format, wordLen, numChannels)` | Set ASI format and enable channels; device follows host clocks. |
-| `configureAsMaster(format, wordLen, fsyncRate, bclkRatio, numChannels)` | Set ASI format, program clock rates, enable channels; device drives clocks. |
+| `configureAsMaster(format, wordLen, fsyncRate, bclkRatio, numChannels, mclkFreq)` | Set ASI format, MCLK frequency and clock rates, enable channels; device drives clocks. |
 | `configurePDMInput(clk, numChannels)` | Set PDM clock frequency; for each needed port, select PDM input, output PDMCLK on GPOx and take PDMDINx on GPIx; enable the channels. Assumes port x uses PDMCLKx_GPOx and PDMDINx_GPIx. |
 | `enableAllChannels(numChannels)` | Enable the first N input and output channels by count instead of bitmask. |
 | `setAllChannelVolumes(volume)` | Set the same digital volume on all 8 channels. |
@@ -318,6 +325,20 @@ These cover the majority of use cases and are the recommended starting point.
 | `setPortEdgeLatchMode(port, mode)` | Choose which clock edge latches the even-numbered channel. |
 | `setASISlotAssignment(channel, slot)` | Assign a channel to a TDM slot (0–63). |
 | `setASIOutputLine(channel, pin)` | Route a channel to the primary or secondary SDOUT. |
+
+---
+
+### ASI output timing and clocking
+
+| Method | Description |
+|--------|-------------|
+| `setASITXOffset(offset)` | Offset slot 0 by 0–31 BCLK cycles from the standard protocol timing. |
+| `setASITXEdge(edge)` | Transmit data on the default or the inverted (half-cycle delayed) BCLK edge. |
+| `setASITXFill(fill)` | Transmit 0 or Hi-Z during unused cycles (Hi-Z lets devices share the data line). |
+| `setASITXLSB(lsb)` | Drive the LSB for a full cycle, or for half a cycle and then Hi-Z. |
+| `setASIBusKeeper(keeper)` | Bus keeper on the data output: off, always on, or only during the LSB. |
+| `setMCLKFrequency(freq)` | MCLK frequency used as the PLL reference in master mode. |
+| `setMCLKRatio(ratio)` | Specify MCLK as a multiple of FSYNC instead (master mode, or slave mode with MCLK as root clock). |
 
 ---
 
@@ -400,20 +421,14 @@ Check your microphone's datasheet for its supported PDM clock range.
 
 The following device capabilities have no corresponding library method. All can be accessed using the low-level `writeRegister()` / `readRegister()` / `updateRegisterBits()` calls.
 
-**ASI_CFG1 register (0x08) — TX offset**
-The TX_OFFSET field (bits [4:0]) offsets the MSB of slot 0 by 0–31 BCLK cycles with respect to the standard protocol timing. There is no `setTXOffset()` method; the default value of 0 (transmit on the first BCLK after FSYNC) is suitable for standard I2S and TDM. If you need a non-zero offset, write directly:
+**Programmable coefficients (pages 2–4)**
+`setBiquadConfig()` sets the number of biquads per channel (0–3), but the biquad coefficients (pages 2 and 3), the digital mixer coefficients and the custom high-pass filter coefficients (page 4) are not accessible through any library method. Each coefficient is a 32-bit value written as four bytes, most significant byte first. To load coefficients you need to switch pages manually, write the coefficient registers, and return to page 0:
 ```cpp
-mic.updateRegisterBits(0x08, 0x1F, offsetValue);
-```
-
-**Biquad filter coefficients (pages 1–4)**
-`setBiquadConfig()` sets the number of active biquad stages (0–3), but the actual filter coefficients live in registers on pages 1–4 and are not accessible through any library method. To load custom coefficients you need to switch pages manually, write the coefficient registers, and return to page 0:
-```cpp
-mic.writeRegister(0x00, 1);          // select page 1
-mic.writeRegister(coeffReg, value); // write coefficient
+mic.writeRegister(0x00, 2);          // select page 2
+mic.writeRegister(coeffReg, value); // write coefficient byte
 mic.writeRegister(0x00, 0);          // return to page 0
 ```
-Refer to the datasheet section "Programmable Biquad Filter" for the register map and coefficient format.
+Refer to datasheet sections 6.3.6.4 to 6.3.6.6 and 7.2 for the register map and coefficient format.
 
 **I2C checksum (I2C_CKSUM, 0x7E)**
 The device keeps a running checksum of I2C transactions in this register, which can be used to verify writes. There is no library method for it; read it with `readRegister(0x7E, value)`, and write to it to reset the checksum to the written value.

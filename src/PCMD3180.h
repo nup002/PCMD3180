@@ -31,6 +31,35 @@ enum WordLength {
   WORD_32_BIT   // 0x30  (reset default)
 };
 
+// ASI_CFG0 (0x07) TX_EDGE, bit [1]
+enum ASITXEdge {
+  ASI_TX_EDGE_DEFAULT,   // 0x00  Default edge as per the protocol and BCLK_POL setting (reset default)
+  ASI_TX_EDGE_INVERTED   // 0x02  Inverted following edge (half cycle delay) with respect to the default edge
+};
+
+// ASI_CFG0 (0x07) TX_FILL, bit [0]
+// Data output (primary and secondary pin) during unused cycles
+enum ASITXFill {
+  ASI_TX_FILL_ZERO,  // 0x00  Always transmit 0 for unused cycles (reset default)
+  ASI_TX_FILL_HI_Z   // 0x01  Always use Hi-Z for unused cycles
+};
+
+// ASI_CFG1 (0x08) TX_LSB, bit [7]
+// Data output (primary and secondary pin) for LSB transmissions
+enum ASITXLSB {
+  ASI_TX_LSB_FULL_CYCLE,  // 0x00  Transmit the LSB for a full cycle (reset default)
+  ASI_TX_LSB_HALF_CYCLE   // 0x80  Transmit the LSB for the first half cycle and Hi-Z for the second half
+};
+
+// ASI_CFG1 (0x08) TX_KEEPER, bits [6:5]
+// Bus keeper on the data output (primary and secondary pin)
+enum ASIBusKeeper {
+  ASI_BUS_KEEPER_DISABLED,            // 0x00  Always disabled (reset default)
+  ASI_BUS_KEEPER_ALWAYS,              // 0x20  Always enabled
+  ASI_BUS_KEEPER_LSB_ONE_CYCLE,       // 0x40  Enabled during LSB transmissions only, for one cycle
+  ASI_BUS_KEEPER_LSB_ONE_HALF_CYCLES  // 0x60  Enabled during LSB transmissions only, for one and a half cycles
+};
+
 // ASI_CFG0 (0x07) FSYNC_POL bit [3] or BCLK_POL bit [2], depending on which argument is being set
 enum ASIPolarity {
   ASI_POLARITY_STANDARD,  // bit clear  Default polarity as per standard protocol
@@ -99,6 +128,32 @@ enum MasterMode {
 enum FSMode {
   FSYNC_MODE_48000,  // 0x00  fS is a multiple (or submultiple) of 48 kHz
   FSYNC_MODE_44100   // 0x08  fS is a multiple (or submultiple) of 44.1 kHz
+};
+
+// MST_CFG0 (0x13) MCLK_FREQ_SEL, bits [2:0]
+// MCLK (GPIO1 or GPIx) frequency for the PLL in master mode, used when CLK_SRC MCLK_FREQ_SEL_MODE = 0
+enum MCLKFrequency {
+  MCLK_FREQ_12000_KHZ,  // 0x00  12 MHz
+  MCLK_FREQ_12288_KHZ,  // 0x01  12.288 MHz
+  MCLK_FREQ_13000_KHZ,  // 0x02  13 MHz  (reset default)
+  MCLK_FREQ_16000_KHZ,  // 0x03  16 MHz
+  MCLK_FREQ_19200_KHZ,  // 0x04  19.2 MHz
+  MCLK_FREQ_19680_KHZ,  // 0x05  19.68 MHz
+  MCLK_FREQ_24000_KHZ,  // 0x06  24 MHz
+  MCLK_FREQ_24576_KHZ   // 0x07  24.576 MHz
+};
+
+// CLK_SRC (0x16) MCLK_RATIO_SEL, bits [5:3]
+// MCLK (GPIO1 or GPIx) to FSYNC ratio, for master mode or when MCLK is the audio root clock in slave mode
+enum MCLKRatio {
+  MCLKRATIO_64,    // 0x00
+  MCLKRATIO_256,   // 0x08
+  MCLKRATIO_384,   // 0x10  (reset default)
+  MCLKRATIO_512,   // 0x18
+  MCLKRATIO_768,   // 0x20
+  MCLKRATIO_1024,  // 0x28
+  MCLKRATIO_1536,  // 0x30
+  MCLKRATIO_2304   // 0x38
 };
 
 // GPIO_CFG0 (0x21) GPIO1_CFG, bits [7:4]
@@ -315,12 +370,17 @@ public:
    * @param fsyncRate FSYNC sample rate
    * @param bclkRatio BCLK-to-FSYNC ratio
    * @param numChannels Number of channels to enable (1-8)
+   * @param mclkFreq Frequency of the MCLK supplied to the device
    * @return True if successful, false otherwise
-   * @note Sets master mode, calls setASIClock() and setASIFormat(), and calls
-   *       enableAllChannels(). Call configurePDMInput() and powerPDM()
-   *       afterwards to complete setup.
+   * @note Sets master mode, calls setMCLKFrequency(), setASIClock() and
+   *       setASIFormat(), and calls enableAllChannels(). In master mode the
+   *       PLL uses MCLK on GPIO1 or a GPIx pin as its reference (datasheet
+   *       6.3.2); configure that pin with setGPIOConfig(GPIO_MODE_MCLK, ...)
+   *       or setGPIMode(port, GPI_MODE_MCLK). The sample-rate family (48kHz
+   *       or 44.1kHz) is set with setMasterConfig(). Call configurePDMInput()
+   *       and powerPDM() afterwards to complete setup.
    */
-  bool configureAsMaster(AudioFormat format, WordLength wordLen, FSRate fsyncRate, BCLKRatio bclkRatio, uint8_t numChannels);
+  bool configureAsMaster(AudioFormat format, WordLength wordLen, FSRate fsyncRate, BCLKRatio bclkRatio, uint8_t numChannels, MCLKFrequency mclkFreq);
 
   /** Configure PDM clock and enable the required input ports and channels
    * @param clk PDM clock frequency
@@ -379,6 +439,44 @@ public:
    * @note Writes ASI_CFG0 (0x07) FSYNC_POL (bit 3) and BCLK_POL (bit 2).
    */
   bool setASIPolarities(ASIPolarity fsyncPolarity, ASIPolarity bclkPolarity);
+
+  /** Set the BCLK edge on which ASI data is transmitted
+   * @param edge Default edge, or inverted (half cycle delay)
+   * @return True if successful, false otherwise
+   * @note Writes ASI_CFG0 (0x07) TX_EDGE, bit 1.
+   */
+  bool setASITXEdge(ASITXEdge edge);
+
+  /** Set what the ASI data output transmits during unused cycles
+   * @param fill Transmit 0, or Hi-Z
+   * @return True if successful, false otherwise
+   * @note Writes ASI_CFG0 (0x07) TX_FILL, bit 0. Hi-Z lets other devices
+   *       share the data line.
+   */
+  bool setASITXFill(ASITXFill fill);
+
+  /** Set how long the LSB is driven on the ASI data output
+   * @param lsb Full cycle, or half cycle followed by Hi-Z
+   * @return True if successful, false otherwise
+   * @note Writes ASI_CFG1 (0x08) TX_LSB, bit 7.
+   */
+  bool setASITXLSB(ASITXLSB lsb);
+
+  /** Configure the bus keeper on the ASI data output
+   * @param keeper Bus keeper mode
+   * @return True if successful, false otherwise
+   * @note Writes ASI_CFG1 (0x08) TX_KEEPER, bits 6:5.
+   */
+  bool setASIBusKeeper(ASIBusKeeper keeper);
+
+  /** Offset the MSB of slot 0 from the standard protocol timing
+   * @param offset Offset in BCLK cycles (0-31; reset default 0)
+   * @return True if successful, false if offset is above 31
+   * @note Writes ASI_CFG1 (0x08) TX_OFFSET, bits 4:0. In I2S/LJ mode the
+   *       offset applies to both left and right slot 0. See datasheet
+   *       6.3.1.2.
+   */
+  bool setASITXOffset(uint8_t offset);
 
   /** Configure ASI bus error detection and auto-resume
    * @param enableErrorDetection True to enable bus error detection
@@ -440,6 +538,27 @@ public:
    *       AUTO_MODE_PLL_DIS = 1 (see setAutoClockPLLEnabled()).
    */
   bool setDisabledPLLClockSource(PLLSlaveClockSource clkSource);
+
+  /** Set the MCLK frequency used as the PLL reference in master mode
+   * @param freq MCLK frequency (12MHz to 24.576MHz)
+   * @return True if successful, false otherwise
+   * @note Writes MST_CFG0 (0x13) MCLK_FREQ_SEL (bits 2:0) and clears CLK_SRC
+   *       (0x16) MCLK_FREQ_SEL_MODE (bit 6), so the frequency is taken from
+   *       MCLK_FREQ_SEL. Use setMCLKRatio() instead if MCLK is a multiple of
+   *       FSYNC. See datasheet 6.3.2.
+   */
+  bool setMCLKFrequency(MCLKFrequency freq);
+
+  /** Specify MCLK as a multiple of FSYNC
+   * @param ratio MCLK to FSYNC ratio (64 to 2304)
+   * @return True if successful, false otherwise
+   * @note Writes CLK_SRC (0x16) MCLK_RATIO_SEL (bits 5:3) and sets
+   *       MCLK_FREQ_SEL_MODE (bit 6), so in master mode the MCLK frequency is
+   *       taken from the ratio instead of MCLK_FREQ_SEL. The ratio is also
+   *       used in slave mode when MCLK is the audio root clock (see
+   *       setDisabledPLLClockSource()). See datasheet 6.3.2.
+   */
+  bool setMCLKRatio(MCLKRatio ratio);
 
   /** Configure ASI bus clock in master mode
    * @param fsyncRate FSYNC sample rate (8kHz to 768kHz)

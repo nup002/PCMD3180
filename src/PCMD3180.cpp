@@ -73,11 +73,12 @@ bool PCMD3180::configureAsSlave(AudioFormat format, WordLength wordLen, uint8_t 
   return true;
 }
 
-bool PCMD3180::configureAsMaster(AudioFormat format, WordLength wordLen, FSRate fsyncRate, BCLKRatio bclkRatio, uint8_t numChannels) {
+bool PCMD3180::configureAsMaster(AudioFormat format, WordLength wordLen, FSRate fsyncRate, BCLKRatio bclkRatio, uint8_t numChannels, MCLKFrequency mclkFreq) {
   if (numChannels < 1 || numChannels > 8) {
     return false;
   }
   if (!setMasterMode(MODE_MASTER)) return false;
+  if (!setMCLKFrequency(mclkFreq)) return false;
   if (!setASIClock(fsyncRate, bclkRatio)) return false;
   if (!setASIFormat(format, wordLen)) return false;
   if (!enableAllChannels(numChannels)) return false;
@@ -391,6 +392,49 @@ bool PCMD3180::setASIPolarities(ASIPolarity fsyncPolarity, ASIPolarity bclkPolar
   return true;
 }
 
+bool PCMD3180::setASITXEdge(ASITXEdge edge) {
+  return updateRegisterBits(REG_ASI_CFG0, 0x02, (edge == ASI_TX_EDGE_INVERTED) ? 0x02 : 0x00);
+}
+
+bool PCMD3180::setASITXFill(ASITXFill fill) {
+  return updateRegisterBits(REG_ASI_CFG0, 0x01, (fill == ASI_TX_FILL_HI_Z) ? 0x01 : 0x00);
+}
+
+/*
+ASI_CFG1 register methods
+*/
+bool PCMD3180::setASITXLSB(ASITXLSB lsb) {
+  return updateRegisterBits(REG_ASI_CFG1, 0x80, (lsb == ASI_TX_LSB_HALF_CYCLE) ? 0x80 : 0x00);
+}
+
+bool PCMD3180::setASIBusKeeper(ASIBusKeeper keeper) {
+  uint8_t cfg;
+  switch (keeper) {
+    case ASI_BUS_KEEPER_DISABLED:
+      cfg = 0x00;
+      break;
+    case ASI_BUS_KEEPER_ALWAYS:
+      cfg = 0x20;
+      break;
+    case ASI_BUS_KEEPER_LSB_ONE_CYCLE:
+      cfg = 0x40;
+      break;
+    case ASI_BUS_KEEPER_LSB_ONE_HALF_CYCLES:
+      cfg = 0x60;
+      break;
+    default:
+      return false;
+  }
+  return updateRegisterBits(REG_ASI_CFG1, 0x60, cfg);
+}
+
+bool PCMD3180::setASITXOffset(uint8_t offset) {
+  if (offset > 31) {
+    return false;
+  }
+  return updateRegisterBits(REG_ASI_CFG1, 0x1F, offset);
+}
+
 /*
 ASI_CFG2 register methods
 */
@@ -557,6 +601,28 @@ bool PCMD3180::setDisabledPLLClockSource(PLLSlaveClockSource clkSource) {
     cfg = 0x80;
   }
   return updateRegisterBits(REG_CLK_SRC, 0x80, cfg);
+}
+
+/*
+MCLK configuration (MST_CFG0 and CLK_SRC)
+*/
+bool PCMD3180::setMCLKFrequency(MCLKFrequency freq) {
+  if (freq > MCLK_FREQ_24576_KHZ) {
+    return false;
+  }
+  if (!updateRegisterBits(REG_MST_CFG0, 0x07, (uint8_t)freq)) {
+    return false;
+  }
+  // MCLK_FREQ_SEL_MODE = 0: MCLK frequency is taken from MCLK_FREQ_SEL
+  return updateRegisterBits(REG_CLK_SRC, 0x40, 0x00);
+}
+
+bool PCMD3180::setMCLKRatio(MCLKRatio ratio) {
+  if (ratio > MCLKRATIO_2304) {
+    return false;
+  }
+  // MCLK_FREQ_SEL_MODE = 1: MCLK frequency is specified as a multiple of FSYNC in MCLK_RATIO_SEL
+  return updateRegisterBits(REG_CLK_SRC, 0x78, 0x40 | ((uint8_t)ratio << 3));
 }
 
 
